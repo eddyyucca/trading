@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ app_name }}</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Prediction Logger • Binance Public Data • No Trading</p>
+        <h1>{{ app_name }}</h1>
+        <p class="subtitle">Aplikasi ini hanya mencatat prediksi UP/DOWN, mengevaluasi hasilnya, dan menghitung akurasi. Tidak ada order buy/sell.</p>
+      </div>
+      <div class="actions">
+        <button onclick="apiPost('/api/collector/backfill?limit=300')">Backfill</button>
+        <button onclick="apiPost('/api/control/start')">Start</button>
+        <button class="danger" onclick="apiPost('/api/control/stop')">Stop</button>
+      </div>
+    </header>
+
+    <section class="grid cards">
+      <div class="card"><span>Total Prediksi</span><strong id="total_predictions">0</strong></div>
+      <div class="card"><span>Pending</span><strong id="pending">0</strong></div>
+      <div class="card success"><span>Correct</span><strong id="correct">0</strong></div>
+      <div class="card danger-text"><span>Wrong</span><strong id="wrong">0</strong></div>
+      <div class="card neutral"><span>Neutral</span><strong id="neutral">0</strong></div>
+      <div class="card"><span>Directional Accuracy</span><strong id="directional_accuracy">0%</strong></div>
+    </section>
+
+    <section id="sample_warning" class="warning hidden">
+      Sampel prediksi masih kecil. Jangan mengambil kesimpulan akurasi sebelum minimal 1.000 prediksi aktif.
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Control Cepat</h2>
+        <div class="actions small">
+          <button onclick="apiPost('/api/collector/run-once')">Collect Once</button>
+          <button onclick="apiPost('/api/predict/run-once')">Predict Once</button>
+          <button onclick="apiPost('/api/evaluator/run-once')">Evaluate Once</button>
+        </div>
+      </div>
+      <pre id="last_action">Siap.</pre>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Live Prediction Feed</h2>
+        <span id="last_refresh" class="muted"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th><th>Symbol</th><th>Pred</th><th>Conf</th><th>Score</th><th>Horizon</th><th>Status</th><th>Result</th><th>Return</th><th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="prediction_rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
