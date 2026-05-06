@@ -7,6 +7,7 @@ from app.api.routes import router
 from app.db.init_db import init_db, seed_defaults
 from app.db.session import SessionLocal
 from app.core.config import get_settings
+from app.services.jobs import ensure_history, start_jobs
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, debug=settings.app_debug)
@@ -23,6 +24,10 @@ def on_startup() -> None:
         seed_defaults(db)
     finally:
         db.close()
+    if settings.auto_backfill_on_start:
+        ensure_history()
+    if settings.auto_start_jobs:
+        start_jobs()
 
 
 @app.get('/', response_class=HTMLResponse)

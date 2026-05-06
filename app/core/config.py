@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     app_name: str = 'Binance Prediction Tracker'
     app_env: str = 'development'
     app_debug: bool = True
+    auto_start_jobs: bool = False
+    auto_backfill_on_start: bool = True
+    startup_backfill_limit: int = 300
+    startup_min_candles: int = 120
 
     database_url: str = 'sqlite:///./local.db'
     binance_rest_base_url: str = 'https://api.binance.com'
@@ -22,6 +26,18 @@ class Settings(BaseSettings):
     min_confidence: float = 0.65
     threshold_short: float = 0.0005
     threshold_long: float = 0.0010
+    paper_position_usd: float = 5.0
+    futures_mode: bool = False
+    futures_leverage: float = 1.0
+    take_profit_percent: float = 0.0025
+    stop_loss_percent: float = 0.0015
+    near_stop_percent: float = 0.70
+    signal_cooldown_minutes: int = 20
+    max_open_positions: int = 3
+    performance_guard_enabled: bool = True
+    performance_guard_min_results: int = 8
+    performance_guard_min_accuracy: float = 0.45
+    performance_guard_min_pnl_usd: float = 0.0
     collector_interval_seconds: int = 30
     evaluator_interval_seconds: int = 20
 

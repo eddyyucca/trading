@@ -1,9 +1,10 @@
 from __future__ import annotations
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.session import SessionLocal
-from app.models.entities import Symbol
+from app.models.entities import MarketCandle, Symbol
 from app.services.binance_client import BinanceRestClient, upsert_candles
 from app.services.prediction_engine import run_prediction_once
 from app.services.evaluator import evaluate_pending
@@ -42,6 +43,49 @@ def backfill(limit: int = 300) -> dict:
         return {'inserted': inserted_total, 'details': details}
     finally:
         db.close()
+
+
+def candle_count(db: Session, symbol_text: str, timeframe: str) -> int:
+    return db.query(func.count(MarketCandle.id)).join(Symbol).filter(
+        Symbol.symbol == symbol_text,
+        MarketCandle.timeframe == timeframe,
+    ).scalar() or 0
+
+
+def ensure_history() -> dict:
+    settings = get_settings()
+    db: Session = SessionLocal()
+    try:
+        missing = []
+        for symbol in settings.symbol_list:
+            for timeframe in settings.timeframe_list:
+                count = candle_count(db, symbol, timeframe)
+                if count < settings.startup_min_candles:
+                    missing.append({
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'count': count,
+                        'required': settings.startup_min_candles,
+                    })
+    finally:
+        db.close()
+
+    if not missing:
+        return {
+            'status': 'ready',
+            'backfilled': False,
+            'required': settings.startup_min_candles,
+            'missing': [],
+        }
+
+    result = backfill(limit=settings.startup_backfill_limit)
+    return {
+        'status': 'backfilled',
+        'backfilled': True,
+        'required': settings.startup_min_candles,
+        'missing_before': missing,
+        **result,
+    }
 
 
 def prediction_job() -> dict:

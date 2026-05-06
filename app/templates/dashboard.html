@@ -7,31 +7,78 @@
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <main class="container">
-    <header class="hero">
+  <main class="shell">
+    <header class="topbar">
       <div>
-        <p class="eyebrow">Prediction Logger • Binance Public Data • No Trading</p>
+        <p class="eyebrow">Realtime paper signal scanner</p>
         <h1>{{ app_name }}</h1>
-        <p class="subtitle">Aplikasi ini hanya mencatat prediksi UP/DOWN, mengevaluasi hasilnya, dan menghitung akurasi. Tidak ada order buy/sell.</p>
+        <p class="subtitle">Mode futures agresif: margin kecil, leverage, sinyal BUY/SELL, TP/SL, dan PnL paper realtime.</p>
       </div>
       <div class="actions">
         <button onclick="apiPost('/api/collector/backfill?limit=300')">Backfill</button>
+        <button onclick="apiPost('/api/history/ensure')">Ensure History</button>
         <button onclick="apiPost('/api/control/start')">Start</button>
         <button class="danger" onclick="apiPost('/api/control/stop')">Stop</button>
       </div>
     </header>
 
-    <section class="grid cards">
-      <div class="card"><span>Total Prediksi</span><strong id="total_predictions">0</strong></div>
-      <div class="card"><span>Pending</span><strong id="pending">0</strong></div>
-      <div class="card success"><span>Correct</span><strong id="correct">0</strong></div>
-      <div class="card danger-text"><span>Wrong</span><strong id="wrong">0</strong></div>
-      <div class="card neutral"><span>Neutral</span><strong id="neutral">0</strong></div>
-      <div class="card"><span>Directional Accuracy</span><strong id="directional_accuracy">0%</strong></div>
+    <section class="metric-grid">
+      <div class="metric"><span>Total Sinyal</span><strong id="total_predictions">0</strong></div>
+      <div class="metric"><span>Pending</span><strong id="pending">0</strong></div>
+      <div class="metric good"><span>Correct</span><strong id="correct">0</strong></div>
+      <div class="metric bad"><span>Wrong</span><strong id="wrong">0</strong></div>
+      <div class="metric wait"><span>Neutral</span><strong id="neutral">0</strong></div>
+      <div class="metric"><span>Accuracy</span><strong id="directional_accuracy">0%</strong></div>
+      <div class="metric"><span>History</span><strong id="history_ready">-</strong></div>
+      <div class="metric good"><span>Realized PnL</span><strong id="realized_pnl">$0.0000</strong></div>
+      <div class="metric"><span>Floating PnL</span><strong id="unrealized_pnl">$0.0000</strong></div>
+      <div class="metric"><span>Total PnL</span><strong id="total_pnl">$0.0000</strong></div>
+      <div class="metric"><span>TP / SL</span><strong id="tp_sl_count">0 / 0</strong></div>
+      <div class="metric"><span>Futures</span><strong id="futures_mode">-</strong></div>
     </section>
 
     <section id="sample_warning" class="warning hidden">
-      Sampel prediksi masih kecil. Jangan mengambil kesimpulan akurasi sebelum minimal 1.000 prediksi aktif.
+      Sampel sinyal masih kecil. Jangan mengambil kesimpulan akurasi sebelum minimal 1.000 sinyal aktif.
+    </section>
+
+    <section class="workspace">
+      <section class="panel chart-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Realtime Chart</h2>
+            <span id="chart_status" class="muted">Menunggu data...</span>
+          </div>
+          <div class="chart-controls">
+            <select id="symbol_select"></select>
+            <span class="timeframe-pill">Chart 1m / Signal 5m</span>
+          </div>
+        </div>
+
+        <div class="position-strip">
+          <div><span>Posisi</span><strong id="selected_side">HOLD</strong></div>
+          <div><span>Margin</span><strong id="selected_margin">-</strong></div>
+          <div><span>Notional</span><strong id="selected_notional">-</strong></div>
+          <div><span>Entry</span><strong id="selected_entry">-</strong></div>
+          <div><span>TP</span><strong id="selected_tp">-</strong></div>
+          <div><span>SL</span><strong id="selected_sl">-</strong></div>
+          <div><span>Liq</span><strong id="selected_liq">-</strong></div>
+          <div><span>PnL</span><strong id="selected_pnl">-</strong></div>
+          <div><span>Confidence</span><strong id="selected_confidence">-</strong></div>
+          <div><span>Next Eval</span><strong id="selected_due">-</strong></div>
+        </div>
+
+        <div class="chart-wrap">
+          <canvas id="price_chart"></canvas>
+        </div>
+      </section>
+
+      <aside class="panel positions-panel">
+        <div class="panel-header">
+          <h2>Posisi Paper Aktif</h2>
+          <span id="positions_count" class="muted">0 posisi</span>
+        </div>
+        <div id="active_positions" class="position-list"></div>
+      </aside>
     </section>
 
     <section class="panel">
@@ -48,14 +95,14 @@
 
     <section class="panel">
       <div class="panel-header">
-        <h2>Live Prediction Feed</h2>
+        <h2>Live Signal Feed</h2>
         <span id="last_refresh" class="muted"></span>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Time</th><th>Symbol</th><th>Pred</th><th>Conf</th><th>Score</th><th>Horizon</th><th>Status</th><th>Result</th><th>Return</th><th>Reason</th>
+              <th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th><th>Score</th><th>Horizon</th><th>Status</th><th>Exit</th><th>Result</th><th>Return</th><th>Reason</th>
             </tr>
           </thead>
           <tbody id="prediction_rows"></tbody>

@@ -90,7 +90,7 @@ class PredictionLog(Base):
     timeframe: Mapped[str] = mapped_column(String(8), nullable=False)
     prediction_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     entry_price: Mapped[float] = mapped_column(Float, nullable=False)
-    prediction: Mapped[str] = mapped_column(String(8), nullable=False)  # UP/DOWN/SKIP
+    prediction: Mapped[str] = mapped_column(String(8), nullable=False)  # BUY/SELL/HOLD
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     score_total: Mapped[int] = mapped_column(Integer, nullable=False)
     horizon_minutes: Mapped[int] = mapped_column(Integer, nullable=False)

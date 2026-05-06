@@ -18,14 +18,14 @@ def seed_defaults(db: Session) -> None:
 
     model = db.query(ModelVersion).filter(
         ModelVersion.name == 'score_rule',
-        ModelVersion.version == 'v1'
+        ModelVersion.version == 'v5_futures_aggressive'
     ).first()
     if not model:
         db.add(ModelVersion(
             name='score_rule',
-            version='v1',
+            version='v5_futures_aggressive',
             type='rule_based',
-            description='Rule-based scoring engine: trend, momentum, volume, volatility and market regime.',
-            parameters_json='{"min_confidence": 0.65, "score_up": 5, "score_down": -5}'
+            description='Aggressive futures paper signal engine with leverage, wider TP, capped positions and performance guard.',
+            parameters_json='{"min_confidence": 0.74, "primary_threshold": 7, "confirmation_threshold": 4, "single_horizon": true, "cooldown_minutes": 5, "max_open_positions": 5, "futures_leverage": 10}'
         ))
     db.commit()
