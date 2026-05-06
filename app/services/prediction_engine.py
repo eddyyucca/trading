@@ -1,3 +1,21 @@
+"""
+Professional Futures Signal Engine — v6
+========================================
+Philosophy  (think like a top-tier futures trader):
+  1. Trade WITH the macro trend (EMA-200).  Counter-trend = no trade.
+  2. Trend structure must be established (EMA 9/21/50 stack).
+  3. Momentum engine confirms direction (MACD histogram).
+  4. Price at a fair position — not overextended (VWAP, BB %B).
+  5. Oscillators agree (RSI-14 zone, RSI-7 momentum, StochRSI).
+  6. Volume participates — institutions are moving price.
+  7. Candle quality confirms intent (pattern + body strength).
+  8. Trend strength verified (ADX >= 20).
+  9. Higher-timeframe must not oppose the primary signal.
+ 10. When in doubt, stay out.  Cash is a position.
+
+Score ceiling per timeframe: ±24 points.
+Primary threshold to generate a signal: absolute score >= 13 (≈ 54% confluence).
+"""
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -7,12 +25,19 @@ from app.core.config import get_settings
 from app.models.entities import FeatureSnapshot, ModelVersion, PredictionLog, PredictionResult, Symbol
 from app.services.feature_engine import FeatureResult, build_feature_snapshot
 
+# ── Constants ───────────────────────────────────────────────────────────────
+_PRIMARY_SCORE_THRESHOLD    = 13   # minimum primary score (out of 24)
+_SIDE_SCORE_THRESHOLD       = 8    # minimum score to call BUY/SELL in a timeframe
+_CONFIRM_SCORE_THRESHOLD    = 5    # minimum score in a confirmation timeframe
+_HIGHER_TF_BLOCK_THRESHOLD  = 6    # opposing higher-TF score that vetoes the signal
+_HIGHER_TIMEFRAMES          = {'15m', '30m', '1h', '4h', '1d'}
+
 
 @dataclass
 class PredictionDecision:
-    prediction: str
-    confidence: float
-    score_total: int
+    prediction:    str
+    confidence:    float
+    score_total:   int
     reason_summary: str
     market_regime: str
 
@@ -20,20 +45,15 @@ class PredictionDecision:
 @dataclass
 class TimeframeScore:
     timeframe: str
-    score: int
-    side: str
-    blocked: bool
-    reasons: list[str]
+    score:     int
+    side:      str
+    blocked:   bool
+    reasons:   list[str]
 
 
-def confidence_from_score(score: int) -> float:
-    abs_score = abs(score)
-    if abs_score < 8:
-        return 0.50
-    return min(0.92, 0.58 + (abs_score * 0.025))
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-
-def side_from_score(score: int, threshold: int) -> str:
+def _side(score: int, threshold: int) -> str:
     if score >= threshold:
         return 'BUY'
     if score <= -threshold:
@@ -41,104 +61,340 @@ def side_from_score(score: int, threshold: int) -> str:
     return 'HOLD'
 
 
-def opposite_side(side: str) -> str:
-    if side == 'BUY':
-        return 'SELL'
-    if side == 'SELL':
-        return 'BUY'
-    return 'HOLD'
+def _opposite(side: str) -> str:
+    return {'BUY': 'SELL', 'SELL': 'BUY'}.get(side, 'HOLD')
 
 
-def score_timeframe(timeframe: str, snapshot: FeatureSnapshot, close_price: float, open_price: float) -> TimeframeScore:
-    score = 0
+def _confidence(total_score: int) -> float:
+    """Smooth confidence curve.  Score 13 → ~0.73, score 20 → ~0.88, cap 0.95."""
+    return min(0.95, 0.44 + abs(total_score) * 0.022)
+
+
+def _threshold_for_horizon(minutes: int) -> float:
+    s = get_settings()
+    return s.threshold_long if minutes >= 10 else s.threshold_short
+
+
+# ── Core Timeframe Scorer ────────────────────────────────────────────────────
+
+def score_timeframe(
+    timeframe:   str,
+    snapshot:    FeatureSnapshot,
+    close_price: float,
+) -> TimeframeScore:
+    """
+    Score one timeframe.  Returns a TimeframeScore with score in [-24, +24].
+    Positive = bullish, negative = bearish.
+    A blocked result forces HOLD regardless of score.
+    """
+    score   = 0
     reasons: list[str] = []
     blocked = False
+    settings = get_settings()
 
-    if snapshot.ema_9 and snapshot.ema_21 and snapshot.ema_50:
-        if snapshot.ema_9 > snapshot.ema_21 > snapshot.ema_50:
-            score += 4
-            reasons.append(f'{timeframe}: EMA stack bullish')
-        elif snapshot.ema_9 < snapshot.ema_21 < snapshot.ema_50:
-            score -= 4
-            reasons.append(f'{timeframe}: EMA stack bearish')
-        elif snapshot.ema_9 > snapshot.ema_21 and close_price > snapshot.ema_50:
-            score += 2
-            reasons.append(f'{timeframe}: trend bullish')
-        elif snapshot.ema_9 < snapshot.ema_21 and close_price < snapshot.ema_50:
-            score -= 2
-            reasons.append(f'{timeframe}: trend bearish')
-
-    if snapshot.vwap:
-        vwap_distance = abs(close_price - snapshot.vwap) / close_price
-        if vwap_distance > 0.006 and timeframe == get_settings().prediction_timeframe:
-            blocked = True
-            reasons.append(f'{timeframe}: overextended from VWAP blocked')
-        if close_price > snapshot.vwap:
-            score += 2
-            reasons.append(f'{timeframe}: close>VWAP')
-        elif close_price < snapshot.vwap:
-            score -= 2
-            reasons.append(f'{timeframe}: close<VWAP')
-
-    if snapshot.rsi_14:
-        if 52 <= snapshot.rsi_14 <= 68:
-            score += 2
-            reasons.append(f'{timeframe}: RSI bullish')
-        elif 32 <= snapshot.rsi_14 <= 48:
-            score -= 2
-            reasons.append(f'{timeframe}: RSI bearish')
-        elif snapshot.rsi_14 > 76 or snapshot.rsi_14 < 24:
-            blocked = True
-            reasons.append(f'{timeframe}: RSI extreme blocked')
-        elif 48 < snapshot.rsi_14 < 52:
-            reasons.append(f'{timeframe}: RSI neutral')
-
-    if close_price > open_price:
-        score += 1
-        reasons.append(f'{timeframe}: candle bullish')
-    elif close_price < open_price:
-        score -= 1
-        reasons.append(f'{timeframe}: candle bearish')
-
-    if snapshot.volume_ratio:
-        if 0.80 <= snapshot.volume_ratio <= 3.50:
-            score += 1 if score >= 0 else -1
-            reasons.append(f'{timeframe}: volume confirmed')
-        elif snapshot.volume_ratio < 0.80:
-            reasons.append(f'{timeframe}: low volume caution')
-        elif snapshot.volume_ratio > 4.50:
-            blocked = True
-            reasons.append(f'{timeframe}: abnormal volume blocked')
+    # ── 0. Hard pre-filters (always checked first) ───────────────────────
+    if snapshot.market_regime in {'HIGH_VOLATILITY', 'CHAOTIC'}:
+        reasons.append(f'{timeframe}: regime {snapshot.market_regime} blocked')
+        return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
 
     if snapshot.volatility:
         if snapshot.volatility > 0.008:
-            blocked = True
-            reasons.append(f'{timeframe}: high volatility blocked')
-        elif snapshot.volatility < 0.00012:
-            blocked = True
-            reasons.append(f'{timeframe}: flat volatility blocked')
-    if snapshot.candle_range and snapshot.candle_range > 0.010:
-        blocked = True
-        reasons.append(f'{timeframe}: wide candle blocked')
+            reasons.append(f'{timeframe}: excessive volatility blocked')
+            return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
+        if snapshot.volatility < 0.0003:
+            reasons.append(f'{timeframe}: flat/dead market blocked')
+            return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
 
+    if snapshot.candle_range and snapshot.candle_range > 0.010:
+        reasons.append(f'{timeframe}: spike candle blocked')
+        return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
+
+    if snapshot.volume_ratio is not None and snapshot.volume_ratio < 0.30:
+        reasons.append(f'{timeframe}: near-zero volume blocked')
+        return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
+
+    # ── 1. Macro Trend — EMA-200  (+3 / -3) ─────────────────────────────
+    if snapshot.ema_200:
+        clearance = 0.0002  # 0.02 % buffer to avoid noise at the line
+        if close_price > snapshot.ema_200 * (1 + clearance):
+            score += 3
+            reasons.append(f'{timeframe}: above EMA200 macro-bull')
+        elif close_price < snapshot.ema_200 * (1 - clearance):
+            score -= 3
+            reasons.append(f'{timeframe}: below EMA200 macro-bear')
+        else:
+            reasons.append(f'{timeframe}: EMA200 neutral zone')
+
+    # ── 2. Trend Structure — EMA 9/21/50 stack  (+4 / -4) ───────────────
+    if snapshot.ema_9 and snapshot.ema_21 and snapshot.ema_50:
+        if snapshot.ema_9 > snapshot.ema_21 > snapshot.ema_50:
+            score += 4
+            reasons.append(f'{timeframe}: EMA stack bull')
+        elif snapshot.ema_9 < snapshot.ema_21 < snapshot.ema_50:
+            score -= 4
+            reasons.append(f'{timeframe}: EMA stack bear')
+        elif snapshot.ema_9 > snapshot.ema_21 and close_price > snapshot.ema_50:
+            score += 2
+            reasons.append(f'{timeframe}: EMA partial bull')
+        elif snapshot.ema_9 < snapshot.ema_21 and close_price < snapshot.ema_50:
+            score -= 2
+            reasons.append(f'{timeframe}: EMA partial bear')
+        else:
+            reasons.append(f'{timeframe}: EMA mixed')
+
+    # ── 3. Momentum Engine — MACD with slope  (+3 / -3) ─────────────────
+    if snapshot.macd_hist is not None and snapshot.macd_line is not None:
+        hist  = snapshot.macd_hist
+        prev  = snapshot.macd_hist_prev
+        if hist > 0:
+            if prev is not None and prev < 0:
+                score += 3; reasons.append(f'{timeframe}: MACD fresh bull cross')
+            elif prev is not None and hist > prev:
+                score += 2; reasons.append(f'{timeframe}: MACD hist accelerating')
+            else:
+                score += 1; reasons.append(f'{timeframe}: MACD hist decelerating')
+        elif hist < 0:
+            if prev is not None and prev > 0:
+                score -= 3; reasons.append(f'{timeframe}: MACD fresh bear cross')
+            elif prev is not None and hist < prev:
+                score -= 2; reasons.append(f'{timeframe}: MACD hist bear accel')
+            else:
+                score -= 1; reasons.append(f'{timeframe}: MACD hist bear decel')
+        if snapshot.macd_signal is not None:
+            if snapshot.macd_line > snapshot.macd_signal:
+                score += 1; reasons.append(f'{timeframe}: MACD line>signal')
+            else:
+                score -= 1; reasons.append(f'{timeframe}: MACD line<signal')
+
+    # ── 4. VWAP Position  (+2 / -2) — block if overextended ─────────────
+    if snapshot.vwap:
+        dist = abs(close_price - snapshot.vwap) / close_price
+        if dist > 0.007 and timeframe == settings.prediction_timeframe:
+            reasons.append(f'{timeframe}: overextended VWAP blocked')
+            return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
+        if close_price > snapshot.vwap:
+            score += 2
+            reasons.append(f'{timeframe}: above VWAP')
+        else:
+            score -= 2
+            reasons.append(f'{timeframe}: below VWAP')
+
+    # ── 5. RSI-14 Zone  (+2 / -2) ───────────────────────────────────────
+    if snapshot.rsi_14:
+        r = snapshot.rsi_14
+        if r > 76 or r < 24:
+            reasons.append(f'{timeframe}: RSI extreme blocked')
+            return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
+        if 48 <= r <= 65:
+            score += 2; reasons.append(f'{timeframe}: RSI bull zone')
+        elif 35 <= r <= 52:
+            score -= 2; reasons.append(f'{timeframe}: RSI bear zone')
+        elif 65 < r <= 76:
+            reasons.append(f'{timeframe}: RSI overbought caution')  # no bonus — extended
+        elif 24 <= r < 35:
+            reasons.append(f'{timeframe}: RSI oversold caution')    # no bonus — extended
+        else:
+            reasons.append(f'{timeframe}: RSI neutral')
+
+    # ── 6. RSI-7 Momentum Lead  (+1 / -1) ───────────────────────────────
+    if snapshot.rsi_7 and snapshot.rsi_14:
+        diff = snapshot.rsi_7 - snapshot.rsi_14
+        if diff > 3:
+            score += 1; reasons.append(f'{timeframe}: RSI7 leading bull')
+        elif diff < -3:
+            score -= 1; reasons.append(f'{timeframe}: RSI7 leading bear')
+
+    # ── 7. Bollinger Bands %B — position quality  (+1 / -1) ─────────────
+    if snapshot.bb_percent_b is not None:
+        bb = snapshot.bb_percent_b
+        if 0.55 <= bb <= 1.0:
+            score += 1; reasons.append(f'{timeframe}: BB upper half')
+        elif 0.0 <= bb <= 0.45:
+            score -= 1; reasons.append(f'{timeframe}: BB lower half')
+        elif bb > 1.0:
+            reasons.append(f'{timeframe}: BB overextended upper')
+        elif bb < 0.0:
+            reasons.append(f'{timeframe}: BB overextended lower')
+
+    # ── 8. Stochastic RSI  (+2 / -2) ────────────────────────────────────
+    if snapshot.stoch_rsi_k is not None:
+        k = snapshot.stoch_rsi_k
+        if k > 78:
+            score -= 2; reasons.append(f'{timeframe}: StochRSI overbought({k:.0f}) fade')
+        elif k < 22:
+            score += 2; reasons.append(f'{timeframe}: StochRSI oversold({k:.0f}) fade')
+        elif 55 <= k <= 78:
+            score += 1; reasons.append(f'{timeframe}: StochRSI bull')
+        elif 22 <= k <= 45:
+            score -= 1; reasons.append(f'{timeframe}: StochRSI bear')
+        else:
+            reasons.append(f'{timeframe}: StochRSI neutral')
+
+    # ── 9. Candle Pattern  (+2 / -2) ────────────────────────────────────
+    pattern = snapshot.candle_pattern or ''
+    candle_scores = {
+        'BULL_MARUBOZU': +2, 'BEAR_MARUBOZU': -2,
+        'BULLISH':       +1, 'BEARISH':       -1,
+        'HAMMER':        +1, 'SHOOTING_STAR': -1,
+    }
+    if pattern in candle_scores:
+        delta = candle_scores[pattern]
+        score += delta
+        reasons.append(f'{timeframe}: candle={pattern}')
+    elif pattern == 'DOJI':
+        reasons.append(f'{timeframe}: DOJI indecision')
+
+    # ── 10. Volume Confirmation  (+2 / -2) ──────────────────────────────
+    if snapshot.volume_ratio is not None:
+        vr = snapshot.volume_ratio
+        if vr > 4.5:
+            reasons.append(f'{timeframe}: abnormal volume blocked')
+            return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
+        if 1.2 <= vr <= 4.5:
+            score += 2 if score >= 0 else -2
+            reasons.append(f'{timeframe}: strong volume')
+        elif 0.8 <= vr < 1.2:
+            score += 1 if score >= 0 else -1
+            reasons.append(f'{timeframe}: normal volume')
+        elif 0.50 <= vr < 0.8:
+            reasons.append(f'{timeframe}: low volume caution')
+        else:
+            reasons.append(f'{timeframe}: very low volume caution')
+
+    # ── 11. Regime & ADX Trend Strength  (+2 / +1) ──────────────────────
     if snapshot.market_regime == 'TRENDING_UP':
-        score += 2
-        reasons.append(f'{timeframe}: regime up')
+        score += 2; reasons.append(f'{timeframe}: regime trending up')
     elif snapshot.market_regime == 'TRENDING_DOWN':
-        score -= 2
-        reasons.append(f'{timeframe}: regime down')
-    elif snapshot.market_regime == 'LOW_VOLUME':
-        reasons.append(f'{timeframe}: regime LOW_VOLUME caution')
-    elif snapshot.market_regime in {'HIGH_VOLATILITY', 'CHAOTIC'}:
-        blocked = True
-        reasons.append(f'{timeframe}: regime {snapshot.market_regime} blocked')
+        score -= 2; reasons.append(f'{timeframe}: regime trending down')
     elif snapshot.market_regime == 'SIDEWAYS':
-        reasons.append(f'{timeframe}: sideways caution')
+        reasons.append(f'{timeframe}: regime sideways (no trend bonus)')
+    elif snapshot.market_regime == 'LOW_VOLUME':
+        reasons.append(f'{timeframe}: regime low volume (caution)')
+
+    if snapshot.adx_14 is not None:
+        if snapshot.adx_14 < 18:
+            # Weak trend: attenuate score toward zero slightly
+            score = int(score * 0.7)
+            reasons.append(f'{timeframe}: ADX={snapshot.adx_14:.1f} weak, score reduced')
+        elif snapshot.adx_14 >= 30:
+            bonus = 1 if score >= 0 else -1
+            score += bonus
+            reasons.append(f'{timeframe}: ADX={snapshot.adx_14:.1f} strong trend bonus')
 
     if blocked:
-        return TimeframeScore(timeframe=timeframe, score=0, side='HOLD', blocked=True, reasons=reasons)
-    return TimeframeScore(timeframe=timeframe, score=score, side=side_from_score(score, 5), blocked=False, reasons=reasons)
+        return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
 
+    return TimeframeScore(
+        timeframe = timeframe,
+        score     = score,
+        side      = _side(score, _SIDE_SCORE_THRESHOLD),
+        blocked   = False,
+        reasons   = reasons,
+    )
+
+
+# ── Multi-Timeframe Orchestrator ─────────────────────────────────────────────
+
+def score_multi_timeframe(
+    feature_results: dict[str, FeatureResult],
+    primary_tf:      str,
+) -> PredictionDecision:
+    """
+    Combine timeframes using a tiered confirmation model:
+      - Primary (e.g. 5m): must score >= 13 and produce a clear side.
+      - Higher TFs (e.g. 15m): must NOT clearly oppose; bonus if they confirm.
+      - Lower TFs (e.g. 1m): nice to have; bonus if they confirm.
+    """
+    pri_res = feature_results[primary_tf]
+    primary = score_timeframe(primary_tf, pri_res.snapshot, pri_res.latest_close)
+    reasons = primary.reasons[:]
+
+    # Primary must be strong enough to proceed
+    if primary.blocked or primary.side == 'HOLD' or abs(primary.score) < _PRIMARY_SCORE_THRESHOLD:
+        reasons.append(f'{primary_tf}: primary score={primary.score} below threshold={_PRIMARY_SCORE_THRESHOLD}')
+        return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
+
+    side      = primary.side
+    opposite  = _opposite(side)
+
+    # ── Directional exhaustion guards (checked after side is known) ──────
+    snap = pri_res.snapshot
+    if snap.stoch_rsi_k is not None:
+        k = snap.stoch_rsi_k
+        if side == 'BUY' and k > 78:
+            reasons.append(f'{primary_tf}: StochRSI {k:.0f} overbought — blocking BUY')
+            return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
+        if side == 'SELL' and k < 22:
+            reasons.append(f'{primary_tf}: StochRSI {k:.0f} oversold — blocking SELL')
+            return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
+
+    pattern = snap.candle_pattern or ''
+    if side == 'BUY' and pattern in {'BEAR_MARUBOZU', 'SHOOTING_STAR'}:
+        reasons.append(f'{primary_tf}: candle {pattern} opposes BUY — blocking')
+        return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
+    if side == 'SELL' and pattern in {'BULL_MARUBOZU', 'HAMMER'}:
+        reasons.append(f'{primary_tf}: candle {pattern} opposes SELL — blocking')
+        return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
+
+    conf_count       = 0
+    conf_bonus       = 0
+    all_soft_blocked = True   # becomes False if any TF scores cleanly
+
+    for tf, result in feature_results.items():
+        if tf == primary_tf:
+            continue
+        tf_score = score_timeframe(tf, result.snapshot, result.latest_close)
+        reasons.extend(tf_score.reasons[:3])
+        is_higher = tf in _HIGHER_TIMEFRAMES
+
+        if tf_score.blocked:
+            hard_reason = any(
+                kw in r for r in tf_score.reasons
+                for kw in ('volatility blocked', 'RSI extreme blocked', 'spike candle', 'CHAOTIC', 'HIGH_VOLATILITY')
+            )
+            if is_higher and hard_reason:
+                reasons.append(f'{tf}: hard-blocked — aborting')
+                return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
+            # soft block (volume/partial candle) — skip but don't abort
+            reasons.append(f'{tf}: soft-blocked (volume)')
+            continue
+
+        all_soft_blocked = False  # at least one TF scored
+
+        if is_higher and tf_score.side == opposite and abs(tf_score.score) >= _HIGHER_TF_BLOCK_THRESHOLD:
+            reasons.append(f'{tf}: higher-TF opposing score={tf_score.score} — aborting')
+            return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
+
+        if tf_score.side == side and abs(tf_score.score) >= _CONFIRM_SCORE_THRESHOLD:
+            conf_count  += 1
+            conf_bonus  += min(6, abs(tf_score.score))
+
+    if conf_count < 1:
+        # Allow very strong primary signals even when all confirmation TFs are
+        # soft-blocked (partial-candle volume issue).  Cap confidence at 0.80.
+        _SOLO_THRESHOLD = _PRIMARY_SCORE_THRESHOLD + 4   # 17
+        if all_soft_blocked and abs(primary.score) >= _SOLO_THRESHOLD:
+            total_score = primary.score
+            confidence  = min(0.80, _confidence(total_score))
+            reasons.append('solo primary (confirmations soft-blocked)')
+            return PredictionDecision(side, confidence, total_score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
+        reasons.append('no confirmation — HOLD')
+        return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
+
+    signed_bonus = conf_bonus if side == 'BUY' else -conf_bonus
+    total_score  = primary.score + signed_bonus
+    confidence   = min(0.95, _confidence(total_score) + conf_count * 0.04)
+
+    return PredictionDecision(
+        prediction    = side,
+        confidence    = confidence,
+        score_total   = total_score,
+        reason_summary= ', '.join(reasons[:16]),
+        market_regime = pri_res.snapshot.market_regime,
+    )
+
+
+# ── DB Helpers ───────────────────────────────────────────────────────────────
 
 def open_position_count(db: Session) -> int:
     return db.query(func.count(func.distinct(PredictionLog.symbol_id))).filter(
@@ -170,112 +426,76 @@ def performance_guard_status(db: Session) -> dict:
     if not settings.performance_guard_enabled:
         return {'blocked': False, 'reason': 'disabled'}
 
-    rows = db.query(PredictionResult).order_by(PredictionResult.evaluation_time.desc()).limit(settings.performance_guard_min_results).all()
+    rows = (
+        db.query(PredictionResult)
+        .order_by(PredictionResult.evaluation_time.desc())
+        .limit(settings.performance_guard_min_results)
+        .all()
+    )
     if len(rows) < settings.performance_guard_min_results:
         return {'blocked': False, 'reason': 'not_enough_results', 'checked': len(rows)}
 
-    correct = sum(1 for row in rows if row.result == 'CORRECT')
-    wrong = sum(1 for row in rows if row.result == 'WRONG')
-    denom = correct + wrong
+    correct = sum(1 for r in rows if r.result == 'CORRECT')
+    wrong   = sum(1 for r in rows if r.result == 'WRONG')
+    denom   = correct + wrong
     accuracy = (correct / denom) if denom else 0
-    pnl_usd = sum(row.actual_return_percent for row in rows) * settings.paper_position_usd
-    blocked = accuracy < settings.performance_guard_min_accuracy or pnl_usd < settings.performance_guard_min_pnl_usd
+    pnl_usd  = sum(r.actual_return_percent for r in rows) * settings.paper_position_usd
+    blocked  = (
+        accuracy < settings.performance_guard_min_accuracy
+        or pnl_usd < settings.performance_guard_min_pnl_usd
+    )
     return {
-        'blocked': blocked,
-        'checked': len(rows),
+        'blocked':  blocked,
+        'checked':  len(rows),
         'accuracy': round(accuracy, 4),
-        'pnl_usd': round(pnl_usd, 6),
-        'reason': 'recent_performance_below_threshold' if blocked else 'ok',
+        'pnl_usd':  round(pnl_usd, 6),
+        'reason':   'recent_performance_below_threshold' if blocked else 'ok',
     }
-
-
-def score_multi_timeframe(feature_results: dict[str, FeatureResult], primary_timeframe: str) -> PredictionDecision:
-    primary_result = feature_results[primary_timeframe]
-    primary = score_timeframe(
-        primary_timeframe,
-        primary_result.snapshot,
-        primary_result.latest_close,
-        primary_result.latest_open,
-    )
-    scores = {
-        timeframe: score_timeframe(timeframe, result.snapshot, result.latest_close, result.latest_open)
-        for timeframe, result in feature_results.items()
-        if timeframe != primary_timeframe
-    }
-
-    reasons = primary.reasons[:]
-    if primary.blocked or primary.side == 'HOLD' or abs(primary.score) < 7:
-        reasons.append(f'{primary_timeframe}: primary setup not strong enough')
-        return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:14]), primary_result.snapshot.market_regime)
-
-    side = primary.side
-    opposite = opposite_side(side)
-    confirmation_count = 0
-    confirmation_bonus = 0
-    for timeframe, timeframe_score in scores.items():
-        reasons.extend(timeframe_score.reasons[:5])
-        if timeframe_score.blocked:
-            reasons.append(f'{timeframe}: confirmation blocked')
-            return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:14]), primary_result.snapshot.market_regime)
-        if timeframe_score.side == opposite and abs(timeframe_score.score) >= 4:
-            reasons.append(f'{timeframe}: opposite trend blocked')
-            return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:14]), primary_result.snapshot.market_regime)
-        if timeframe_score.side == side and abs(timeframe_score.score) >= 4:
-            confirmation_count += 1
-            confirmation_bonus += min(4, abs(timeframe_score.score))
-
-    if confirmation_count < 1:
-        reasons.append('multi-timeframe confirmation missing')
-        return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:14]), primary_result.snapshot.market_regime)
-
-    signed_bonus = confirmation_bonus if side == 'BUY' else -confirmation_bonus
-    total_score = primary.score + signed_bonus
-    confidence = min(0.94, confidence_from_score(total_score) + (confirmation_count * 0.04))
-
-    return PredictionDecision(
-        prediction=side,
-        confidence=confidence,
-        score_total=total_score,
-        reason_summary=', '.join(reasons[:14]),
-        market_regime=primary_result.snapshot.market_regime,
-    )
 
 
 def get_active_model(db: Session) -> ModelVersion:
-    model = db.query(ModelVersion).filter(ModelVersion.name == 'score_rule', ModelVersion.version == 'v5_futures_aggressive').first()
+    model = db.query(ModelVersion).filter(
+        ModelVersion.name == 'score_rule',
+        ModelVersion.version == 'v6_professional',
+    ).first()
     if not model:
         model = ModelVersion(
             name='score_rule',
-            version='v5_futures_aggressive',
+            version='v6_professional',
             type='rule_based',
-            description='Aggressive futures paper model with leverage, wider TP, capped positions and performance guard.',
-            parameters_json='{"primary_threshold": 7, "confirmation_threshold": 4, "single_horizon": true, "cooldown_minutes": 5, "max_open_positions": 5, "futures_leverage": 10}',
+            description=(
+                'Professional futures engine: EMA200 macro, EMA stack, MACD, '
+                'VWAP, RSI, BB %B, StochRSI, ADX, candle patterns, volume.'
+            ),
+            parameters_json=(
+                '{"primary_threshold": 13, "side_threshold": 8, '
+                '"confirmation_threshold": 5, "futures_leverage": 10}'
+            ),
         )
         db.add(model)
         db.flush()
     return model
 
 
-def threshold_for_horizon(minutes: int) -> float:
-    settings = get_settings()
-    return settings.threshold_long if minutes >= 10 else settings.threshold_short
-
+# ── Main Prediction Loop ──────────────────────────────────────────────────────
 
 def run_prediction_once(db: Session) -> dict:
     settings = get_settings()
-    model = get_active_model(db)
-    created = 0
-    skipped = 0
-    details = []
-    open_positions_at_start = open_position_count(db)
-    opened_symbols_this_run: set[int] = set()
+    model    = get_active_model(db)
+    created  = 0
+    skipped  = 0
+    details  = []
+
     guard = performance_guard_status(db)
     if guard['blocked']:
         return {'created': 0, 'skipped': 0, 'guard': guard, 'details': []}
 
+    open_at_start = open_position_count(db)
+    opened_this_run: set[int] = set()
+
     symbols = db.query(Symbol).filter(Symbol.is_active == True).all()  # noqa: E712
     for symbol in symbols:
-        if open_positions_at_start + len(opened_symbols_this_run) >= settings.max_open_positions:
+        if open_at_start + len(opened_this_run) >= settings.max_open_positions:
             skipped += 1
             details.append({'symbol': symbol.symbol, 'status': 'max_open_positions_reached'})
             continue
@@ -288,60 +508,75 @@ def run_prediction_once(db: Session) -> dict:
             details.append({'symbol': symbol.symbol, 'status': 'cooldown_after_loss'})
             continue
 
-        required_timeframes = []
-        for timeframe in [settings.prediction_timeframe, '5m', '15m']:
-            if timeframe in settings.timeframe_list and timeframe not in required_timeframes:
-                required_timeframes.append(timeframe)
+        # Build required timeframes: primary + available higher/lower TFs
+        required_tfs: list[str] = []
+        for tf in [settings.prediction_timeframe, '15m', '1m']:
+            if tf in settings.timeframe_list and tf not in required_tfs:
+                required_tfs.append(tf)
+
         feature_results = {
-            timeframe: build_feature_snapshot(db, symbol, timeframe, min_rows=90)
-            for timeframe in required_timeframes
+            tf: build_feature_snapshot(db, symbol, tf, min_rows=90)
+            for tf in required_tfs
         }
-        missing_timeframes = [timeframe for timeframe, result in feature_results.items() if result is None]
-        if missing_timeframes:
+        missing = [tf for tf, r in feature_results.items() if r is None]
+        if missing:
             skipped += 1
-            details.append({'symbol': symbol.symbol, 'status': 'not_enough_data', 'missing_timeframes': missing_timeframes})
+            details.append({'symbol': symbol.symbol, 'status': 'not_enough_data', 'missing': missing})
             continue
 
-        valid_feature_results = {timeframe: result for timeframe, result in feature_results.items() if result is not None}
-        feature_result = valid_feature_results[settings.prediction_timeframe]
-        decision = score_multi_timeframe(valid_feature_results, settings.prediction_timeframe)
+        valid = {tf: r for tf, r in feature_results.items() if r is not None}
+        primary_result = valid[settings.prediction_timeframe]
+        decision = score_multi_timeframe(valid, settings.prediction_timeframe)
+
         if decision.prediction == 'HOLD' or decision.confidence < settings.min_confidence:
             skipped += 1
-            details.append({'symbol': symbol.symbol, 'decision': 'HOLD', 'confidence': decision.confidence, 'reason': decision.reason_summary})
+            details.append({
+                'symbol': symbol.symbol,
+                'decision': 'HOLD',
+                'confidence': decision.confidence,
+                'reason': decision.reason_summary,
+            })
             continue
 
         for horizon in settings.horizon_list:
-            due_time = feature_result.snapshot.snapshot_time + timedelta(minutes=horizon)
+            due_time = primary_result.snapshot.snapshot_time + timedelta(minutes=horizon)
             exists = db.query(PredictionLog).filter(
-                PredictionLog.symbol_id == symbol.id,
-                PredictionLog.timeframe == settings.prediction_timeframe,
-                PredictionLog.prediction_time == feature_result.snapshot.snapshot_time,
-                PredictionLog.horizon_minutes == horizon,
-                PredictionLog.model_version_id == model.id,
+                PredictionLog.symbol_id         == symbol.id,
+                PredictionLog.timeframe         == settings.prediction_timeframe,
+                PredictionLog.prediction_time   == primary_result.snapshot.snapshot_time,
+                PredictionLog.horizon_minutes   == horizon,
+                PredictionLog.model_version_id  == model.id,
             ).first()
             if exists:
                 continue
             db.add(PredictionLog(
-                symbol_id=symbol.id,
-                timeframe=settings.prediction_timeframe,
-                prediction_time=feature_result.snapshot.snapshot_time,
-                entry_price=feature_result.latest_close,
-                prediction=decision.prediction,
-                confidence=decision.confidence,
-                score_total=decision.score_total,
-                horizon_minutes=horizon,
-                threshold_percent=threshold_for_horizon(horizon),
-                evaluation_due_time=due_time,
-                model_version_id=model.id,
-                feature_snapshot_id=feature_result.snapshot.id,
-                market_regime=decision.market_regime,
-                reason_summary=decision.reason_summary,
-                status='PENDING',
+                symbol_id          = symbol.id,
+                timeframe          = settings.prediction_timeframe,
+                prediction_time    = primary_result.snapshot.snapshot_time,
+                entry_price        = primary_result.latest_close,
+                prediction         = decision.prediction,
+                confidence         = decision.confidence,
+                score_total        = decision.score_total,
+                horizon_minutes    = horizon,
+                threshold_percent  = _threshold_for_horizon(horizon),
+                evaluation_due_time= due_time,
+                model_version_id   = model.id,
+                feature_snapshot_id= primary_result.snapshot.id,
+                market_regime      = decision.market_regime,
+                reason_summary     = decision.reason_summary,
+                status             = 'PENDING',
             ))
             created += 1
+
         if decision.prediction in {'BUY', 'SELL'}:
-            opened_symbols_this_run.add(symbol.id)
-        details.append({'symbol': symbol.symbol, 'decision': decision.prediction, 'confidence': decision.confidence, 'score': decision.score_total})
+            opened_this_run.add(symbol.id)
+        details.append({
+            'symbol':     symbol.symbol,
+            'decision':   decision.prediction,
+            'confidence': round(decision.confidence, 4),
+            'score':      decision.score_total,
+            'regime':     decision.market_regime,
+        })
 
     db.commit()
     return {'created': created, 'skipped': skipped, 'details': details}

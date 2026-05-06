@@ -15,6 +15,19 @@ def health():
     return {'status': 'ok', 'service': 'binance_prediction_tracker'}
 
 
+@router.post('/reset/predictions')
+def reset_predictions(db: Session = Depends(get_db)):
+    """Delete all prediction logs and results. Candle history is kept."""
+    results_deleted = db.query(PredictionResult).delete()
+    logs_deleted    = db.query(PredictionLog).delete()
+    db.commit()
+    return {
+        'status':           'ok',
+        'results_deleted':  results_deleted,
+        'logs_deleted':     logs_deleted,
+    }
+
+
 @router.post('/control/start')
 def start_background_jobs():
     start_jobs()

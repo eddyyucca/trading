@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(cd C:\\\\xampp\\\\htdocs\\\\trading; $pid8010 = \\(Get-NetTCPConnection -LocalPort 8010 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess; if \\($pid8010\\) { Stop-Process -Id $pid8010 -Force }; .\\\\.venv\\\\Scripts\\\\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8010)",
+      "PowerShell($pid8010 = \\(Get-NetTCPConnection -LocalPort 8010 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess; if \\($pid8010\\) { Stop-Process -Id $pid8010 -Force; Write-Host \"Killed PID $pid8010\" } else { Write-Host \"Port 8010 free\" })",
+      "PowerShell($p = \\(Get-NetTCPConnection -LocalPort 8010 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess; if \\($p\\) { Stop-Process -Id $p -Force })",
+      "PowerShell($p = \\(Get-NetTCPConnection -LocalPort 8010 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess; if \\($p\\) { Stop-Process -Id $p -Force; Start-Sleep -Seconds 1 }; cd C:\\\\xampp\\\\htdocs\\\\trading; .\\\\.venv\\\\Scripts\\\\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8010)",
+      "Bash(..venvScriptspython.exe -c ' *)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8010/api/stats/summary\")",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8010/api/predictions/recent?limit=20\" | ForEach-Object { \"$\\($_.symbol\\) $\\($_.prediction\\) score=$\\($_.score_total\\) conf=$\\($_.confidence\\)% status=$\\($_.status\\) result=$\\($_.result\\) dir=$\\($_.actual_direction\\)\" })",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8010/api/predictions/recent?limit=10\" | Where-Object { $_.status -eq 'EVALUATED' } | Select-Object symbol, prediction, score_total, result, actual_direction, actual_return_percent, entry_price, actual_price | ConvertTo-Json)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8010/api/health\")",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8010/api/reset/predictions\" -Method POST)",
+      "PowerShell(Get-Job)",
+      "PowerShell(Receive-Job -Keep 2>&1)"
+    ]
+  }
+}
