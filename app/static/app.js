@@ -3,7 +3,16 @@ async function apiPost(url) {
   box.textContent = 'Memproses ' + url + ' ...';
   try {
     const res = await fetch(url, { method: 'POST' });
-    const data = await res.json();
+    const raw = await res.text();
+    let data;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      throw new Error(`HTTP ${res.status} ${res.statusText}\n${raw}`);
+    }
+    if (!res.ok) {
+      throw new Error(JSON.stringify(data, null, 2));
+    }
     box.textContent = JSON.stringify(data, null, 2);
     await refreshAll();
   } catch (err) {

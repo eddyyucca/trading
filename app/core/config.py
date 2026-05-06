@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     database_url: str = 'sqlite:///./local.db'
     binance_rest_base_url: str = 'https://api.binance.com'
+    binance_verify_ssl: bool = True
 
     symbols: str = 'BTCUSDT,ETHUSDT,BNBUSDT'
     timeframes: str = '1m,5m,15m'

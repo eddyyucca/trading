@@ -16,7 +16,11 @@ def ms_to_dt(ms: int) -> datetime:
 class BinanceRestClient:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.client = httpx.Client(base_url=self.settings.binance_rest_base_url, timeout=15)
+        self.client = httpx.Client(
+            base_url=self.settings.binance_rest_base_url,
+            timeout=15,
+            verify=self.settings.binance_verify_ssl,
+        )
 
     def get_klines(self, symbol: str, interval: str, limit: int = 300) -> list[list[Any]]:
         res = self.client.get('/api/v3/klines', params={'symbol': symbol, 'interval': interval, 'limit': limit})
