@@ -214,3 +214,30 @@ def candles(symbol: str, timeframe: str, limit: int = Query(100, ge=1, le=500), 
         'close': c.close_price,
         'volume': c.volume,
     } for c in rows]
+
+
+@router.get('/ai/status')
+def ai_status(db: Session = Depends(get_db)):
+    import json
+    from app.ml.auto_learner import get_latest_ai_model_version
+    model = get_latest_ai_model_version(db)
+    if not model:
+        return {'active': False, 'message': 'No AI model found'}
+    params = json.loads(model.parameters_json) if model.parameters_json else {}
+    return {
+        'active': model.is_active,
+        'model_name': model.name,
+        'version': model.version,
+        'type': model.type,
+        'description': model.description,
+        'created_at': model.created_at.isoformat() if model.created_at else None,
+        'metrics': params,
+    }
+
+
+@router.post('/ai/retrain')
+def trigger_ai_retrain():
+    from app.ml.auto_learner import run_auto_retrain_cycle
+    result = run_auto_retrain_cycle(force=True)
+    return result
+

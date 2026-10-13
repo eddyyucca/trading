@@ -102,6 +102,8 @@ Evaluator akan menutup posisi lebih cepat jika candle menyentuh take-profit, sto
 - `GET /api/control/status`
 - `POST /api/control/start`
 - `POST /api/control/stop`
+- `GET /api/ai/status` (Melihat status & metrik model AI aktif)
+- `POST /api/ai/retrain` (Memicu siklus Auto-Learner untuk retrain & upgrade model)
 - `POST /api/collector/backfill?limit=300`
 - `POST /api/collector/run-once`
 - `POST /api/predict/run-once`
@@ -109,6 +111,14 @@ Evaluator akan menutup posisi lebih cepat jika candle menyentuh take-profit, sto
 - `GET /api/predictions/recent`
 - `GET /api/stats/summary`
 
+## AI & Continual Learning (Self-Improving Engine)
+
+Sistem telah dilengkapi dengan model Machine Learning **XGBoost** dan modul **Auto-Learner**:
+- **Dataset & Fitur:** 22 fitur teknikal (RSI, EMA spreads, MACD, Bollinger Bands, ATR, volume).
+- **Target Labeling:** Metode *Triple Barrier* (+0.35% Take Profit vs -0.20% Stop Loss).
+- **Continuous Learning Loop:** Setiap 6 jam (atau dipicu manual via `/api/ai/retrain`), job `auto_learner` akan melatih model penantang (*Challenger*). Model penantang hanya dipromosikan jika performanya lebih baik dari model yang sedang berjalan (*Champion*).
+- **Model Version Registry:** Tercatat di tabel `model_versions` database MySQL.
+
 ## Catatan Risiko
 
-Sinyal ini berbasis rule sederhana dan belum boleh dianggap akurat untuk trading sungguhan. Gunakan minimal 1.000 hasil evaluasi sebelum menilai performa awal, dan jangan hubungkan ke order real tanpa risk management, backtest, dan validasi tambahan.
+Sinyal ini berbasis analisis probabilitas kuantitatif paper trading. Gunakan minimal 1.000 hasil evaluasi sebelum menilai performa awal, dan jangan hubungkan ke order real tanpa risk management, backtest, dan validasi tambahan.

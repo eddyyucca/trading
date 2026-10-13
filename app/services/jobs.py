@@ -104,6 +104,11 @@ def evaluator_job() -> dict:
         db.close()
 
 
+def auto_learner_job() -> dict:
+    from app.ml.auto_learner import run_auto_retrain_cycle
+    return run_auto_retrain_cycle(force=False)
+
+
 def start_jobs() -> None:
     settings = get_settings()
     if not scheduler.running:
@@ -114,10 +119,13 @@ def start_jobs() -> None:
         scheduler.add_job(prediction_job, 'interval', seconds=60, id='predictor', replace_existing=True)
     if not scheduler.get_job('evaluator'):
         scheduler.add_job(evaluator_job, 'interval', seconds=settings.evaluator_interval_seconds, id='evaluator', replace_existing=True)
+    if not scheduler.get_job('auto_learner'):
+        # Auto-retrains every 6 hours to adapt to new market data
+        scheduler.add_job(auto_learner_job, 'interval', hours=6, id='auto_learner', replace_existing=True)
 
 
 def stop_jobs() -> None:
-    for job_id in ['collector', 'predictor', 'evaluator']:
+    for job_id in ['collector', 'predictor', 'evaluator', 'auto_learner']:
         job = scheduler.get_job(job_id)
         if job:
             scheduler.remove_job(job_id)

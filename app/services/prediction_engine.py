@@ -24,12 +24,15 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.entities import FeatureSnapshot, ModelVersion, PredictionLog, PredictionResult, Symbol
 from app.services.feature_engine import FeatureResult, build_feature_snapshot
+from app.ml.predictor import predict_ai_signal
 
 # ── Constants ───────────────────────────────────────────────────────────────
-_PRIMARY_SCORE_THRESHOLD    = 13   # minimum primary score (out of 24)
+_PRIMARY_SCORE_THRESHOLD    = 15   # minimum primary score — raised for higher precision
 _SIDE_SCORE_THRESHOLD       = 8    # minimum score to call BUY/SELL in a timeframe
 _CONFIRM_SCORE_THRESHOLD    = 5    # minimum score in a confirmation timeframe
 _HIGHER_TF_BLOCK_THRESHOLD  = 6    # opposing higher-TF score that vetoes the signal
+_STOCH_OB_BLOCK             = 75   # StochRSI overbought — block BUY above this
+_STOCH_OS_BLOCK             = 25   # StochRSI oversold — block SELL below this
 _HIGHER_TIMEFRAMES          = {'15m', '30m', '1h', '4h', '1d'}
 
 
@@ -93,7 +96,7 @@ def score_timeframe(
     settings = get_settings()
 
     # ── 0. Hard pre-filters (always checked first) ───────────────────────
-    if snapshot.market_regime in {'HIGH_VOLATILITY', 'CHAOTIC'}:
+    if snapshot.market_regime in {'HIGH_VOLATILITY', 'CHAOTIC', 'SIDEWAYS', 'LOW_VOLUME'}:
         reasons.append(f'{timeframe}: regime {snapshot.market_regime} blocked')
         return TimeframeScore(timeframe, 0, 'HOLD', True, reasons)
 
@@ -219,13 +222,13 @@ def score_timeframe(
     # ── 8. Stochastic RSI  (+2 / -2) ────────────────────────────────────
     if snapshot.stoch_rsi_k is not None:
         k = snapshot.stoch_rsi_k
-        if k > 78:
+        if k > _STOCH_OB_BLOCK:
             score -= 2; reasons.append(f'{timeframe}: StochRSI overbought({k:.0f}) fade')
-        elif k < 22:
+        elif k < _STOCH_OS_BLOCK:
             score += 2; reasons.append(f'{timeframe}: StochRSI oversold({k:.0f}) fade')
-        elif 55 <= k <= 78:
+        elif 55 <= k <= _STOCH_OB_BLOCK:
             score += 1; reasons.append(f'{timeframe}: StochRSI bull')
-        elif 22 <= k <= 45:
+        elif _STOCH_OS_BLOCK <= k <= 45:
             score -= 1; reasons.append(f'{timeframe}: StochRSI bear')
         else:
             reasons.append(f'{timeframe}: StochRSI neutral')
@@ -321,10 +324,10 @@ def score_multi_timeframe(
     snap = pri_res.snapshot
     if snap.stoch_rsi_k is not None:
         k = snap.stoch_rsi_k
-        if side == 'BUY' and k > 78:
+        if side == 'BUY' and k > _STOCH_OB_BLOCK:
             reasons.append(f'{primary_tf}: StochRSI {k:.0f} overbought — blocking BUY')
             return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
-        if side == 'SELL' and k < 22:
+        if side == 'SELL' and k < _STOCH_OS_BLOCK:
             reasons.append(f'{primary_tf}: StochRSI {k:.0f} oversold — blocking SELL')
             return PredictionDecision('HOLD', 0.50, primary.score, ', '.join(reasons[:16]), pri_res.snapshot.market_regime)
 
@@ -454,6 +457,17 @@ def performance_guard_status(db: Session) -> dict:
 
 
 def get_active_model(db: Session) -> ModelVersion:
+    # 1. Prioritize active trained AI model
+    ai_model = (
+        db.query(ModelVersion)
+        .filter(ModelVersion.type == 'ml_xgboost', ModelVersion.is_active == True)
+        .order_by(ModelVersion.id.desc())
+        .first()
+    )
+    if ai_model:
+        return ai_model
+
+    # 2. Fallback to rule-based model
     model = db.query(ModelVersion).filter(
         ModelVersion.name == 'score_rule',
         ModelVersion.version == 'v6_professional',
@@ -526,9 +540,25 @@ def run_prediction_once(db: Session) -> dict:
 
         valid = {tf: r for tf, r in feature_results.items() if r is not None}
         primary_result = valid[settings.prediction_timeframe]
-        decision = score_multi_timeframe(valid, settings.prediction_timeframe)
 
-        if decision.prediction == 'HOLD' or decision.confidence < settings.min_confidence:
+        if model.type == 'ml_xgboost':
+            ai_res = predict_ai_signal(
+                db, symbol, timeframe=settings.prediction_timeframe, confidence_threshold=0.42
+            )
+            regime = primary_result.snapshot.market_regime if (primary_result and primary_result.snapshot) else 'UNKNOWN'
+            decision = PredictionDecision(
+                prediction=ai_res['action'],
+                confidence=ai_res['confidence'],
+                score_total=int(ai_res['confidence'] * 100),
+                reason_summary=' | '.join(ai_res['reason']),
+                market_regime=regime,
+            )
+            min_required_conf = 0.40
+        else:
+            decision = score_multi_timeframe(valid, settings.prediction_timeframe)
+            min_required_conf = settings.min_confidence
+
+        if decision.prediction == 'HOLD' or decision.confidence < min_required_conf:
             skipped += 1
             details.append({
                 'symbol': symbol.symbol,

@@ -12,7 +12,13 @@
       "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8010/api/health\")",
       "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8010/api/reset/predictions\" -Method POST)",
       "PowerShell(Get-Job)",
-      "PowerShell(Receive-Job -Keep 2>&1)"
+      "PowerShell(Receive-Job -Keep 2>&1)",
+      "PowerShell(Start-Sleep -Seconds 5; try { \\(Invoke-RestMethod -Uri \"http://localhost:8010/api/health\"\\).status } catch { \"not ready\" })",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8010 -ErrorAction SilentlyContinue)",
+      "PowerShell(Start-Sleep -Seconds 8; try { \\(Invoke-RestMethod -Uri \"http://localhost:8010/api/health\"\\).status } catch { \"not ready\" })",
+      "PowerShell(Test-NetConnection -ComputerName 127.0.0.1 -Port 8010)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8010/api/predict/run-once\" -Method POST)",
+      "PowerShell(Get-Process -Name python -ErrorAction SilentlyContinue)"
     ]
   }
 }
