@@ -1,6 +1,6 @@
-# Binance Prediction Tracker
+# AEGIS — Autonomous AI Quant Prediction & Trading Engine
 
-Aplikasi Python untuk memantau top crypto dari Binance public market data, membuat sinyal otomatis `BUY`, `SELL`, atau `HOLD`, lalu mengevaluasi akurasi sinyal berdasarkan horizon waktu. Aplikasi ini membuat keputusan paper signal, bukan order trading sungguhan.
+**AEGIS** adalah sistem trading kuantitatif dan prediksi futures otonom berbasis Machine Learning lokal (XGBoost GPU/CPU) yang terus belajar secara mandiri (*Closed-Loop Continual Learning*). Mengambil data real-time dari Binance, menghitung 22 fitur teknikal, mengeksekusi keputusan paper trading `BUY` dan `SELL` dengan target Take Profit & Stop Loss ketat, serta mengevaluasi performa secara kontinu.
 
 ## Fitur
 

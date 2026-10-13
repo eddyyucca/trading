@@ -241,3 +241,16 @@ def trigger_ai_retrain():
     result = run_auto_retrain_cycle(force=True)
     return result
 
+
+from pydantic import BaseModel
+
+class ChatMessagePayload(BaseModel):
+    message: str
+
+@router.post('/chat')
+async def chat_with_copilot(payload: ChatMessagePayload):
+    from app.services.copilot import ask_gemini_copilot
+    reply = await ask_gemini_copilot(payload.message)
+    return {'reply': reply}
+
+

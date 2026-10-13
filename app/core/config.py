@@ -1,6 +1,9 @@
 from functools import lru_cache
 from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -40,6 +43,7 @@ class Settings(BaseSettings):
     performance_guard_min_pnl_usd: float = 0.0
     collector_interval_seconds: int = 30
     evaluator_interval_seconds: int = 20
+    gemini_api_key: str = ''
 
     @property
     def symbol_list(self) -> List[str]:

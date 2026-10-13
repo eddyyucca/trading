@@ -3,114 +3,221 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{ app_name }}</title>
+  <title>AEGIS AI - Realtime Quant Trading Dashboard</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">Realtime paper signal scanner</p>
-        <h1>{{ app_name }}</h1>
-        <p class="subtitle">Mode futures agresif: margin kecil, leverage, sinyal BUY/SELL, TP/SL, dan PnL paper realtime.</p>
-      </div>
-      <div class="actions">
-        <button onclick="apiPost('/api/collector/backfill?limit=300')">Backfill</button>
-        <button onclick="apiPost('/api/history/ensure')">Ensure History</button>
-        <button onclick="apiPost('/api/control/start')">Start</button>
-        <button class="danger" onclick="apiPost('/api/control/stop')">Stop</button>
-      </div>
-    </header>
-
-    <section class="metric-grid">
-      <div class="metric"><span>Total Sinyal</span><strong id="total_predictions">0</strong></div>
-      <div class="metric"><span>Pending</span><strong id="pending">0</strong></div>
-      <div class="metric good"><span>Correct</span><strong id="correct">0</strong></div>
-      <div class="metric bad"><span>Wrong</span><strong id="wrong">0</strong></div>
-      <div class="metric wait"><span>Neutral</span><strong id="neutral">0</strong></div>
-      <div class="metric"><span>Accuracy</span><strong id="directional_accuracy">0%</strong></div>
-      <div class="metric"><span>History</span><strong id="history_ready">-</strong></div>
-      <div class="metric good"><span>Realized PnL</span><strong id="realized_pnl">$0.0000</strong></div>
-      <div class="metric"><span>Floating PnL</span><strong id="unrealized_pnl">$0.0000</strong></div>
-      <div class="metric"><span>Total PnL</span><strong id="total_pnl">$0.0000</strong></div>
-      <div class="metric"><span>TP / SL</span><strong id="tp_sl_count">0 / 0</strong></div>
-      <div class="metric"><span>Futures</span><strong id="futures_mode">-</strong></div>
-    </section>
-
-    <section id="sample_warning" class="warning hidden">
-      Sampel sinyal masih kecil. Jangan mengambil kesimpulan akurasi sebelum minimal 1.000 sinyal aktif.
-    </section>
-
-    <section class="workspace">
-      <section class="panel chart-panel">
-        <div class="panel-header">
-          <div>
-            <h2>Realtime Chart</h2>
-            <span id="chart_status" class="muted">Menunggu data...</span>
+  <div class="app-layout">
+    <!-- MAIN COLUMN (LEFT / CENTER) -->
+    <div class="main-content">
+      <!-- Topbar Header -->
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-tags">
+            <span class="live-pill"><span class="pulse-dot"></span> LIVE 2.5s</span>
+            <span id="ai_badge" class="ai-pill">AEGIS: v1.0.0-xgb (Aktif)</span>
           </div>
-          <div class="chart-controls">
-            <select id="symbol_select"></select>
-            <span class="timeframe-pill">Chart 1m / Signal 5m</span>
-          </div>
+          <h1>AEGIS <span class="tagline">// Autonomous Quant Trading Engine</span></h1>
+          <p class="subtitle">Sistem Prediksi Futures Kuantitatif Berbasis Otak Lokal (Ryzen AI & RTX 4060)</p>
         </div>
 
-        <div class="position-strip">
-          <div><span>Posisi</span><strong id="selected_side">HOLD</strong></div>
-          <div><span>Margin</span><strong id="selected_margin">-</strong></div>
-          <div><span>Notional</span><strong id="selected_notional">-</strong></div>
-          <div><span>Entry</span><strong id="selected_entry">-</strong></div>
-          <div><span>TP</span><strong id="selected_tp">-</strong></div>
-          <div><span>SL</span><strong id="selected_sl">-</strong></div>
-          <div><span>Liq</span><strong id="selected_liq">-</strong></div>
-          <div><span>PnL</span><strong id="selected_pnl">-</strong></div>
-          <div><span>Confidence</span><strong id="selected_confidence">-</strong></div>
-          <div><span>Next Eval</span><strong id="selected_due">-</strong></div>
+        <div class="topbar-actions">
+          <button class="btn btn-predict" onclick="apiAction('/api/predict/run-once', 'Memindai Peluang & Eksekusi AI...')">
+            ⚡ Analisis & Eksekusi AI
+          </button>
+          <button class="btn btn-eval" onclick="apiAction('/api/evaluator/run-once', 'Mengevaluasi TP/SL...')">
+            ⚖️ Cek TP/SL
+          </button>
+          <button class="btn" onclick="apiAction('/api/collector/run-once', 'Mengambil Candle Baru...')">
+            📥 Ambil Data
+          </button>
+          <button class="btn" onclick="triggerRetrain()">
+            🎓 Retrain AI
+          </button>
         </div>
+      </header>
 
-        <div class="chart-wrap">
-          <canvas id="price_chart"></canvas>
+      <!-- Key Metrics Row -->
+      <section class="metric-grid">
+        <div class="metric-card">
+          <span class="m-lbl">Total PnL (Floating + Realized)</span>
+          <strong id="total_pnl" class="m-val">$0.00</strong>
+        </div>
+        <div class="metric-card">
+          <span class="m-lbl">Floating PnL (Berjalan)</span>
+          <strong id="unrealized_pnl" class="m-val">$0.00</strong>
+        </div>
+        <div class="metric-card">
+          <span class="m-lbl">Realized PnL (Tutup)</span>
+          <strong id="realized_pnl" class="m-val">$0.00</strong>
+        </div>
+        <div class="metric-card">
+          <span class="m-lbl">Akurasi Win-Rate</span>
+          <strong id="directional_accuracy" class="m-val">0%</strong>
+        </div>
+        <div class="metric-card">
+          <span class="m-lbl">Posisi Aktif</span>
+          <strong id="pending_count" class="m-val accent-text">0 Posisi</strong>
+        </div>
+        <div class="metric-card">
+          <span class="m-lbl">Take Profit Hit</span>
+          <strong id="tp_count" class="m-val good">0</strong>
+        </div>
+        <div class="metric-card">
+          <span class="m-lbl">Stop Loss Hit</span>
+          <strong id="sl_count" class="m-val bad">0</strong>
+        </div>
+        <div class="metric-card">
+          <span class="m-lbl">Futures Mode</span>
+          <strong id="futures_mode" class="m-val">10x</strong>
         </div>
       </section>
 
-      <aside class="panel positions-panel">
+      <!-- SECTION 1: Tindakan Eksekusi AEGIS yang Sedang Berjalan -->
+      <section class="panel highlight-panel">
         <div class="panel-header">
-          <h2>Posisi Paper Aktif</h2>
-          <span id="positions_count" class="muted">0 posisi</span>
+          <div>
+            <h2>🚀 Tindakan Eksekusi AEGIS yang Sedang Berjalan (Active Trades)</h2>
+            <span class="muted">Posisi BUY & SELL riil yang sedang dibuka oleh model AI. Klik kartu untuk melihat di grafik.</span>
+          </div>
+          <span id="active_trade_badge" class="badge-pill">0 Posisi Berjalan</span>
         </div>
-        <div id="active_positions" class="position-list"></div>
-      </aside>
-    </section>
+        <div id="active_orders_grid" class="orders-grid">
+          <!-- Injected via JS -->
+        </div>
+      </section>
 
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Control Cepat</h2>
-        <div class="actions small">
-          <button onclick="apiPost('/api/collector/run-once')">Collect Once</button>
-          <button onclick="apiPost('/api/predict/run-once')">Predict Once</button>
-          <button onclick="apiPost('/api/evaluator/run-once')">Evaluate Once</button>
+      <!-- SECTION 2: Grafik Eksekusi & Level TP/SL -->
+      <section class="panel chart-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h2 id="chart_title">Grafik Pergerakan Harga</h2>
+            <span id="chart_status" class="muted">Memuat data...</span>
+          </div>
+          <div class="chart-controls">
+            <select id="symbol_select" title="Pilih koin"></select>
+            <button class="btn-subtle btn-sm" onclick="refreshChart(true)">🔄 Refresh</button>
+          </div>
+        </div>
+
+        <!-- Ribbon Status Koin Terpilih -->
+        <div id="trade_ribbon" class="trade-ribbon">
+          <div class="ribbon-item"><span>Status Sinyal</span><strong id="ribbon_side">HOLD</strong></div>
+          <div class="ribbon-item"><span>Keyakinan AI</span><strong id="ribbon_conf">-</strong></div>
+          <div class="ribbon-item"><span>Harga Entry</span><strong id="ribbon_entry">-</strong></div>
+          <div class="ribbon-item"><span>Target TP (+0.35%)</span><strong id="ribbon_tp" class="good">-</strong></div>
+          <div class="ribbon-item"><span>Batas SL (-0.20%)</span><strong id="ribbon_sl" class="bad">-</strong></div>
+          <div class="ribbon-item"><span>Floating PnL</span><strong id="ribbon_pnl">-</strong></div>
+          <div class="ribbon-item"><span>Target Waktu</span><strong id="ribbon_due">-</strong></div>
+        </div>
+
+        <div class="chart-wrapper">
+          <canvas id="price_chart"></canvas>
+          <div class="chart-legend">
+            <span><i class="legend-color legend-price"></i> Harga 1m</span>
+            <span><i class="legend-color legend-entry"></i> Entry</span>
+            <span><i class="legend-color legend-tp"></i> Target TP</span>
+            <span><i class="legend-color legend-sl"></i> Stop Loss</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 3: Riwayat Lengkap Sinyal & Keputusan AEGIS -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>📜 Riwayat Sinyal & Keputusan AEGIS (Signal Feed)</h2>
+            <span class="muted">Audit lengkap semua keputusan model AI beserta probabilitasnya</span>
+          </div>
+          <div class="filter-tabs">
+            <button id="tab_buysell" class="tab-btn active" onclick="setFeedFilter('BUYSELL')">🔥 Tindakan BUY & SELL</button>
+            <button id="tab_pending" class="tab-btn" onclick="setFeedFilter('PENDING')">⏳ Masih Berjalan</button>
+            <button id="tab_done" class="tab-btn" onclick="setFeedFilter('DONE')">✅ Selesai (TP / SL)</button>
+            <button id="tab_all" class="tab-btn" onclick="setFeedFilter('ALL')">Semua (Termasuk HOLD)</button>
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Waktu</th>
+                <th>Simbol</th>
+                <th>Tindakan AI</th>
+                <th>Probabilitas</th>
+                <th>Harga Entry</th>
+                <th>Horizon</th>
+                <th>Status Order</th>
+                <th>Arah Keluar</th>
+                <th>Hasil</th>
+                <th>Return PnL</th>
+                <th>Alasan & Rincian Probabilitas Model</th>
+              </tr>
+            </thead>
+            <tbody id="feed_tbody">
+              <!-- Injected via JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- RIGHT COLUMN: CHAT COPILOT DIBANTU GEMINI -->
+    <aside class="chat-sidebar">
+      <div class="chat-header">
+        <div class="chat-header-title">
+          <span class="chat-icon">✨</span>
+          <div>
+            <h3>AEGIS Copilot</h3>
+            <span class="chat-subtitle">Didukung Google Gemini + Otak Lokal</span>
+          </div>
+        </div>
+        <span class="copilot-badge">Online</span>
+      </div>
+
+      <!-- Quick Suggestion Chips -->
+      <div class="suggestion-chips">
+        <button class="chip" onclick="sendQuickPrompt('Kenapa AEGIS buka posisi di XRP?')">🎯 Kenapa jual XRP?</button>
+        <button class="chip" onclick="sendQuickPrompt('Bagaimana ringkasan performa trading saat ini?')">📊 Ringkasan PnL</button>
+        <button class="chip" onclick="sendQuickPrompt('Jelaskan strategi dan cara kerja model AEGIS')">🧠 Strategi AEGIS</button>
+        <button class="chip" onclick="sendQuickPrompt('Apakah posisi yang terbuka saat ini aman dari risiko?')">⚖️ Cek Risiko</button>
+      </div>
+
+      <!-- Messages Stream -->
+      <div id="chat_messages" class="chat-messages">
+        <div class="chat-bubble bubble-ai">
+          <div class="bubble-sender">AEGIS Copilot</div>
+          <div class="bubble-content">
+            Halo! Saya adalah asisten analitik Anda. Saya membaca seluruh data database lokal AEGIS secara real-time. Tanyakan apa saja tentang alasan di balik keputusan BUY/SELL, performa portofolio, atau kondisi pasar saat ini!
+          </div>
         </div>
       </div>
-      <pre id="last_action">Siap.</pre>
-    </section>
 
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Live Signal Feed</h2>
-        <span id="last_refresh" class="muted"></span>
+      <!-- Input Area -->
+      <div class="chat-input-area">
+        <form id="chat_form" onsubmit="handleChatSubmit(event)">
+          <div class="input-wrap">
+            <input 
+              type="text" 
+              id="chat_input" 
+              placeholder="Tanyakan ke AEGIS & Gemini..." 
+              autocomplete="off" 
+            />
+            <button type="submit" id="chat_send_btn" class="btn-send" title="Kirim">
+              ➤
+            </button>
+          </div>
+        </form>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th><th>Score</th><th>Horizon</th><th>Status</th><th>Exit</th><th>Result</th><th>Return</th><th>Reason</th>
-            </tr>
-          </thead>
-          <tbody id="prediction_rows"></tbody>
-        </table>
-      </div>
-    </section>
-  </main>
 
-<script src="/static/app.js"></script>
+      <!-- Mini System Log -->
+      <div class="mini-console">
+        <span class="mini-console-title">System Console:</span>
+        <pre id="console_log">AEGIS aktif. Sistem memantau pasar real-time.</pre>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>

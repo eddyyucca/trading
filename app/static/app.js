@@ -1,373 +1,593 @@
+// AEGIS Autonomous AI Dashboard & Gemini Copilot Controller
 const state = {
   symbols: [],
   selectedSymbol: null,
   positions: [],
   predictions: [],
   candles: [],
+  activeFilter: 'BUYSELL',
+  pollIntervalMs: 2500,
+  isPolling: true,
+  timerId: null,
+  isChatBusy: false,
 };
 
-async function fetchJson(url, options = {}) {
-  const res = await fetch(url, options);
-  const raw = await res.text();
-  let data;
+// ── Fetch Helper ─────────────────────────────────────────────────────────────
+async function fetchApi(url, opts = {}) {
   try {
-    data = raw ? JSON.parse(raw) : {};
-  } catch {
-    throw new Error(`HTTP ${res.status} ${res.statusText}\n${raw}`);
-  }
-  if (!res.ok) {
-    throw new Error(JSON.stringify(data, null, 2));
-  }
-  return data;
-}
-
-async function apiPost(url) {
-  const box = document.getElementById('last_action');
-  box.textContent = 'Memproses ' + url + ' ...';
-  try {
-    const data = await fetchJson(url, { method: 'POST' });
-    box.textContent = JSON.stringify(data, null, 2);
-    await refreshAll();
+    const res = await fetch(url, opts);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
   } catch (err) {
-    box.textContent = 'ERROR: ' + err;
+    console.error(`API Error [${url}]:`, err);
+    return null;
   }
 }
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, ch => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
+// ── API Actions ──────────────────────────────────────────────────────────────
+async function apiAction(url, label) {
+  const log = document.getElementById('console_log');
+  if (log) log.textContent = `[Action] ${label || url}...`;
+  try {
+    const res = await fetch(url, { method: 'POST' });
+    const data = await res.json();
+    if (log) log.textContent = `[Sukses] ${JSON.stringify(data, null, 2)}`;
+    await syncAll(true);
+  } catch (err) {
+    if (log) log.textContent = `[Error] ${err.message}`;
+  }
+}
+
+async function triggerRetrain() {
+  const log = document.getElementById('console_log');
+  if (log) log.textContent = '[AEGIS] Menjalankan Auto-Learner Retrain... (~5s)';
+  try {
+    const res = await fetch('/api/ai/retrain', { method: 'POST' });
+    const data = await res.json();
+    if (log) log.textContent = `[AEGIS Retrain Selesai]:\n${JSON.stringify(data, null, 2)}`;
+    await refreshAiBadge();
+    await syncAll(true);
+  } catch (err) {
+    if (log) log.textContent = `[AEGIS Retrain Error]: ${err.message}`;
+  }
+}
+
+// ── Formatting ───────────────────────────────────────────────────────────────
+function fmtPrice(val) {
+  if (val === null || val === undefined || isNaN(val)) return '-';
+  const n = Number(val);
+  return n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n.toFixed(6);
+}
+
+function fmtUsd(val) {
+  if (val === null || val === undefined || isNaN(val)) return '$0.00';
+  const n = Number(val);
+  const sign = n > 0 ? '+' : '';
+  return `${sign}$${n.toFixed(4)}`;
+}
+
+function fmtTime(val) {
+  if (!val) return '-';
+  return val.replace('T', ' ').slice(11, 19);
+}
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[ch]));
 }
 
-function signalSide(prediction) {
-  if (['BUY', 'UP'].includes(prediction)) return 'BUY';
-  if (['SELL', 'DOWN'].includes(prediction)) return 'SELL';
-  return 'HOLD';
+// Simple Markdown to HTML formatter for Chat bubbles
+function formatMarkdown(text) {
+  if (!text) return '';
+  let formatted = escapeHtml(text);
+  // Bold **text**
+  formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // Italic *text*
+  formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  // Bullet points
+  formatted = formatted.replace(/• (.*?)(?:\n|$)/g, '<li>$1</li>');
+  if (formatted.includes('<li>')) {
+    formatted = formatted.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+  }
+  // Line breaks
+  formatted = formatted.replace(/\n/g, '<br/>');
+  return formatted;
 }
 
-function signalClass(prediction) {
-  const side = signalSide(prediction);
-  if (side === 'BUY') return 'up';
-  if (side === 'SELL') return 'down';
-  return 'neutral-badge';
+// ── AI Badge Status ──────────────────────────────────────────────────────────
+async function refreshAiBadge() {
+  const data = await fetchApi('/api/ai/status');
+  if (!data) return;
+  const badge = document.getElementById('ai_badge');
+  const ver = data.version || 'v1.0.0-xgb';
+  if (badge) badge.textContent = `AEGIS: ${ver} (${data.active ? 'Aktif' : 'Standby'})`;
 }
 
-function badge(text, cls) {
-  return `<span class="badge ${cls}">${escapeHtml(text || '-')}</span>`;
-}
-
-function fmtTime(value) {
-  if (!value) return '-';
-  return value.replace('T', ' ').slice(0, 19);
-}
-
-function fmtPrice(value) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
-  const number = Number(value);
-  if (number >= 1000) return number.toFixed(2);
-  if (number >= 1) return number.toFixed(4);
-  return number.toFixed(6);
-}
-
-function fmtUsd(value) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
-  const sign = Number(value) > 0 ? '+' : '';
-  return `${sign}$${Number(value).toFixed(4)}`;
-}
-
-function riskClass(status) {
-  if (status === 'NEAR_STOP' || status === 'STOP_LOSS_HIT') return 'wrong';
-  if (status === 'TAKE_PROFIT_HIT' || status === 'IN_PROFIT') return 'correct';
-  return 'pending';
-}
-
-function setMoneyMetric(id, value) {
-  const element = document.getElementById(id);
-  element.textContent = fmtUsd(value);
-  element.className = Number(value) >= 0 ? 'buy-text' : 'sell-text';
-}
-
-async function refreshStats() {
-  const [s, history] = await Promise.all([
-    fetchJson('/api/stats/summary'),
-    fetchJson('/api/history/status'),
+// ── Metrics & Active Orders Sync ─────────────────────────────────────────────
+async function refreshMetricsAndOrders() {
+  const [stats, positions] = await Promise.all([
+    fetchApi('/api/stats/summary'),
+    fetchApi('/api/positions/active'),
   ]);
-  document.getElementById('total_predictions').textContent = s.total_predictions;
-  document.getElementById('pending').textContent = s.pending;
-  document.getElementById('correct').textContent = s.correct;
-  document.getElementById('wrong').textContent = s.wrong;
-  document.getElementById('neutral').textContent = s.neutral;
-  document.getElementById('directional_accuracy').textContent = s.directional_accuracy + '%';
-  document.getElementById('history_ready').textContent = history.ready ? 'READY' : 'LOADING';
-  document.getElementById('history_ready').className = history.ready ? 'buy-text' : 'hold-text';
-  setMoneyMetric('realized_pnl', s.realized_pnl_usd);
-  setMoneyMetric('unrealized_pnl', s.unrealized_pnl_usd);
-  setMoneyMetric('total_pnl', s.total_pnl_usd);
-  document.getElementById('tp_sl_count').textContent = `${s.take_profit} / ${s.stop_loss + s.near_stop}`;
-  document.getElementById('futures_mode').textContent = s.futures_mode ? `${s.futures_leverage}x` : 'OFF';
-  document.getElementById('futures_mode').className = s.futures_mode ? 'buy-text' : 'hold-text';
-  document.getElementById('sample_warning').classList.toggle('hidden', !s.sample_warning);
+
+  if (stats) {
+    const totPnl = document.getElementById('total_pnl');
+    if (totPnl) {
+      totPnl.textContent = fmtUsd(stats.total_pnl_usd);
+      totPnl.className = 'm-val ' + (stats.total_pnl_usd >= 0 ? 'good' : 'bad');
+    }
+
+    const unPnl = document.getElementById('unrealized_pnl');
+    if (unPnl) {
+      unPnl.textContent = fmtUsd(stats.unrealized_pnl_usd);
+      unPnl.className = 'm-val ' + (stats.unrealized_pnl_usd >= 0 ? 'good' : 'bad');
+    }
+
+    const rePnl = document.getElementById('realized_pnl');
+    if (rePnl) {
+      rePnl.textContent = fmtUsd(stats.realized_pnl_usd);
+      rePnl.className = 'm-val ' + (stats.realized_pnl_usd >= 0 ? 'good' : 'bad');
+    }
+
+    const dirAcc = document.getElementById('directional_accuracy');
+    if (dirAcc) dirAcc.textContent = `${stats.directional_accuracy ?? 0}%`;
+
+    const pend = document.getElementById('pending_count');
+    if (pend) pend.textContent = `${stats.pending ?? 0} Posisi`;
+
+    const tpC = document.getElementById('tp_count');
+    if (tpC) tpC.textContent = stats.take_profit ?? 0;
+
+    const slC = document.getElementById('sl_count');
+    if (slC) slC.textContent = (stats.stop_loss ?? 0) + (stats.near_stop ?? 0);
+
+    const futM = document.getElementById('futures_mode');
+    if (futM) futM.textContent = stats.futures_mode ? `${stats.futures_leverage}x` : 'OFF';
+  }
+
+  if (positions) {
+    state.positions = Array.isArray(positions) ? positions : [];
+    const badge = document.getElementById('active_trade_badge');
+    if (badge) badge.textContent = `${state.positions.length} Posisi Berjalan`;
+    renderActiveOrdersGrid();
+
+    // Auto-select first active position if current selection has no trade
+    if (state.positions.length > 0) {
+      const currentHasTrade = state.positions.some(p => p.symbol === state.selectedSymbol);
+      if (!currentHasTrade) {
+        selectSymbol(state.positions[0].symbol, false);
+      }
+    }
+  }
+
+  updateRibbonDisplay();
 }
 
-async function refreshSymbols() {
-  const rows = await fetchJson('/api/symbols');
-  state.symbols = rows.map(row => row.symbol);
-  const previousSymbol = state.selectedSymbol;
-  if (!state.selectedSymbol && state.symbols.length) {
-    const firstPosition = state.positions[0]?.symbol;
-    state.selectedSymbol = firstPosition || state.symbols[0];
+// ── Active Orders Grid Rendering ─────────────────────────────────────────────
+function renderActiveOrdersGrid() {
+  const container = document.getElementById('active_orders_grid');
+  if (!container) return;
+
+  if (!state.positions.length) {
+    container.innerHTML = `
+      <div class="empty-trades">
+        <div class="empty-icon">⏳</div>
+        <strong>Belum Ada Posisi BUY/SELL Aktif</strong>
+        <p>AEGIS menganalisis pasar setiap 60 detik. Ketika probabilitas sinyal melampaui ambang batas keyakinan, posisi paper futures 10x akan otomatis dieksekusi di sini.</p>
+        <button class="btn btn-predict btn-sm" onclick="apiAction('/api/predict/run-once', 'Memindai Peluang AEGIS...')">⚡ Scan Peluang AI Sekarang</button>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = state.positions.map(p => {
+    const isSelected = p.symbol === state.selectedSymbol ? ' active' : '';
+    const isBuy = p.side === 'BUY';
+    const sideClass = isBuy ? 'badge-buy' : 'badge-sell';
+    const pnlSign = p.unrealized_pnl_usd >= 0 ? 'good' : 'bad';
+    const pnlPct = p.unrealized_return_percent !== undefined ? `${p.unrealized_return_percent > 0 ? '+' : ''}${p.unrealized_return_percent.toFixed(2)}%` : '';
+
+    return `
+      <div class="order-card${isSelected}" onclick="selectSymbol('${p.symbol}', true)">
+        <div class="order-header">
+          <div class="order-symbol-group">
+            <strong>${p.symbol}</strong>
+            <span class="badge ${sideClass}">${isBuy ? '🟢 BUY (LONG)' : '🔴 SELL (SHORT)'}</span>
+          </div>
+          <div class="order-pnl ${pnlSign}">
+            <strong>${fmtUsd(p.unrealized_pnl_usd)}</strong>
+            <small>(${pnlPct})</small>
+          </div>
+        </div>
+
+        <div class="order-grid-details">
+          <div><small>Harga Masuk</small><b>${fmtPrice(p.entry_price)}</b></div>
+          <div><small>Harga Saat Ini</small><b>${fmtPrice(p.current_price)}</b></div>
+          <div><small>Target TP (+0.35%)</small><b class="good">${fmtPrice(p.take_profit_price)}</b></div>
+          <div><small>Batas SL (-0.20%)</small><b class="bad">${fmtPrice(p.stop_loss_price)}</b></div>
+          <div><small>Margin / Lev</small><b>$${p.margin_usd} (${p.leverage}x)</b></div>
+          <div><small>Notional</small><b>$${p.notional_usd}</b></div>
+          <div><small>Keyakinan AEGIS</small><b class="accent-text">${p.confidence}%</b></div>
+          <div><small>Status Order</small><span class="status-pill status-${(p.risk_status || '').toLowerCase()}">${p.risk_status}</span></div>
+        </div>
+
+        <div class="order-footer">
+          <span class="order-time">Waktu: ${fmtTime(p.prediction_time)}</span>
+          <span class="view-chart-hint">📈 Klik untuk lihat di chart</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function updateRibbonDisplay() {
+  const p = state.positions.find(item => item.symbol === state.selectedSymbol);
+  const sideEl = document.getElementById('ribbon_side');
+  if (!sideEl) return;
+
+  if (p) {
+    const isBuy = p.side === 'BUY';
+    sideEl.textContent = isBuy ? 'BUY (LONG)' : 'SELL (SHORT)';
+    sideEl.className = isBuy ? 'good' : 'bad';
+    document.getElementById('ribbon_conf').textContent = `${p.confidence}%`;
+    document.getElementById('ribbon_entry').textContent = fmtPrice(p.entry_price);
+    document.getElementById('ribbon_tp').textContent = `${fmtPrice(p.take_profit_price)} (+0.35%)`;
+    document.getElementById('ribbon_sl').textContent = `${fmtPrice(p.stop_loss_price)} (-0.20%)`;
+    const pnlEl = document.getElementById('ribbon_pnl');
+    pnlEl.textContent = `${fmtUsd(p.unrealized_pnl_usd)} (${p.unrealized_return_percent ?? 0}%)`;
+    pnlEl.className = p.unrealized_pnl_usd >= 0 ? 'good' : 'bad';
+    document.getElementById('ribbon_due').textContent = fmtTime(p.next_due_time);
+  } else {
+    sideEl.textContent = 'HOLD / NETRAL';
+    sideEl.className = 'muted';
+    document.getElementById('ribbon_conf').textContent = '-';
+    document.getElementById('ribbon_entry').textContent = '-';
+    document.getElementById('ribbon_tp').textContent = '-';
+    document.getElementById('ribbon_sl').textContent = '-';
+    document.getElementById('ribbon_pnl').textContent = '$0.00';
+    document.getElementById('ribbon_pnl').className = 'muted';
+    document.getElementById('ribbon_due').textContent = '-';
+  }
+}
+
+// ── Symbols Initialization ───────────────────────────────────────────────────
+async function initSymbols() {
+  const list = await fetchApi('/api/symbols');
+  if (!list || !list.length) return;
+  state.symbols = list.map(item => item.symbol);
+  if (!state.selectedSymbol) {
+    state.selectedSymbol = state.symbols[0];
   }
 
   const select = document.getElementById('symbol_select');
-  const current = select.value;
-  select.innerHTML = state.symbols.map(symbol => (
-    `<option value="${escapeHtml(symbol)}">${escapeHtml(symbol)}</option>`
-  )).join('');
-  select.value = state.selectedSymbol || current || '';
-  if (state.selectedSymbol !== previousSymbol) {
-    renderPositions();
-    renderSelectedPosition();
+  if (select) {
+    select.innerHTML = state.symbols.map(s => `<option value="${s}">${s}</option>`).join('');
+    select.value = state.selectedSymbol;
+    select.addEventListener('change', e => {
+      selectSymbol(e.target.value, true);
+    });
   }
 }
 
-async function refreshPositions() {
-  state.positions = await fetchJson('/api/positions/active');
-  document.getElementById('positions_count').textContent = `${state.positions.length} posisi`;
-  renderPositions();
-  renderSelectedPosition();
-}
-
-function renderPositions() {
-  const box = document.getElementById('active_positions');
-  if (!state.positions.length) {
-    box.innerHTML = '<div class="empty-state">Belum ada posisi BUY/SELL aktif. Sistem akan menampilkan posisi setelah sinyal lolos filter confidence.</div>';
-    return;
+function selectSymbol(sym, triggerChart = true) {
+  state.selectedSymbol = sym;
+  const select = document.getElementById('symbol_select');
+  if (select) select.value = sym;
+  renderActiveOrdersGrid();
+  updateRibbonDisplay();
+  if (triggerChart) {
+    refreshChart(true);
   }
-
-  box.innerHTML = state.positions.map(position => {
-    const active = position.symbol === state.selectedSymbol ? ' active' : '';
-    const cls = position.side === 'BUY' ? 'up' : 'down';
-    const horizons = [...new Set(position.horizons)].sort((a, b) => a - b).join('m, ') + 'm';
-    return `<button class="position-item${active}" onclick="selectSymbol('${escapeHtml(position.symbol)}')">
-      <span class="position-row"><strong>${escapeHtml(position.symbol)}</strong>${badge(position.side, cls)}</span>
-      <span class="position-row"><small>Status</small>${badge(position.risk_status, riskClass(position.risk_status))}</span>
-      <span class="position-row"><small>Margin / Lev</small><b>$${Number(position.margin_usd).toFixed(2)} / ${position.leverage}x</b></span>
-      <span class="position-row"><small>Notional</small><b>$${Number(position.notional_usd).toFixed(2)}</b></span>
-      <span class="position-row"><small>Entry</small><b>${fmtPrice(position.entry_price)}</b></span>
-      <span class="position-row"><small>TP</small><b>${fmtPrice(position.take_profit_price)} / ${fmtUsd(position.take_profit_pnl_usd)}</b></span>
-      <span class="position-row"><small>SL</small><b>${fmtPrice(position.stop_loss_price)} / ${fmtUsd(position.stop_loss_pnl_usd)}</b></span>
-      <span class="position-row"><small>Liq</small><b>${fmtPrice(position.liquidation_price)}</b></span>
-      <span class="position-row"><small>PnL</small><b class="${position.unrealized_pnl_usd >= 0 ? 'buy-text' : 'sell-text'}">${fmtUsd(position.unrealized_pnl_usd)}</b></span>
-      <span class="position-row"><small>Horizon</small><b>${escapeHtml(horizons)}</b></span>
-    </button>`;
-  }).join('');
 }
 
-function renderSelectedPosition() {
-  const position = state.positions.find(item => item.symbol === state.selectedSymbol);
-  document.getElementById('selected_side').textContent = position?.side || 'HOLD';
-  document.getElementById('selected_side').className = position?.side === 'BUY' ? 'buy-text' : position?.side === 'SELL' ? 'sell-text' : 'hold-text';
-  document.getElementById('selected_margin').textContent = position ? `$${Number(position.margin_usd).toFixed(2)} / ${position.leverage}x` : '-';
-  document.getElementById('selected_notional').textContent = position ? `$${Number(position.notional_usd).toFixed(2)}` : '-';
-  document.getElementById('selected_entry').textContent = fmtPrice(position?.entry_price);
-  document.getElementById('selected_tp').textContent = position ? `${fmtPrice(position.take_profit_price)} (${fmtUsd(position.take_profit_pnl_usd)})` : '-';
-  document.getElementById('selected_sl').textContent = position ? `${fmtPrice(position.stop_loss_price)} (${fmtUsd(position.stop_loss_pnl_usd)})` : '-';
-  document.getElementById('selected_liq').textContent = fmtPrice(position?.liquidation_price);
-  document.getElementById('selected_pnl').textContent = position ? fmtUsd(position.unrealized_pnl_usd) : '-';
-  document.getElementById('selected_pnl').className = position?.unrealized_pnl_usd >= 0 ? 'buy-text' : position ? 'sell-text' : 'hold-text';
-  document.getElementById('selected_confidence').textContent = position ? `${position.confidence}%` : '-';
-  document.getElementById('selected_due').textContent = position ? fmtTime(position.next_due_time).slice(11, 19) : '-';
-}
-
-function selectSymbol(symbol) {
-  state.selectedSymbol = symbol;
-  document.getElementById('symbol_select').value = symbol;
-  renderPositions();
-  renderSelectedPosition();
-  refreshChart();
-}
-
-async function refreshChart() {
+// ── Chart with Entry, TP, and SL Visual Lines ────────────────────────────────
+async function refreshChart(force = false) {
   if (!state.selectedSymbol) return;
-  const symbol = state.selectedSymbol;
-  const [candles, predictions] = await Promise.all([
-    fetchJson(`/api/candles/${symbol}/1m?limit=160`),
-    fetchJson(`/api/predictions/recent?symbol=${symbol}&limit=80`),
-  ]);
+  const sym = state.selectedSymbol;
+  const titleEl = document.getElementById('chart_title');
+  if (titleEl) titleEl.textContent = `Grafik ${sym} (1m)`;
+
+  const candles = await fetchApi(`/api/candles/${sym}/1m?limit=100`);
+  if (!candles || !candles.length) return;
   state.candles = candles;
-  state.predictions = predictions;
-  document.getElementById('chart_status').textContent = `${symbol} - ${candles.length} candle - ${new Date().toLocaleTimeString()}`;
-  drawChart(document.getElementById('price_chart'), candles, predictions);
+
+  const lastCandle = candles[candles.length - 1];
+  const statEl = document.getElementById('chart_status');
+  if (statEl) statEl.textContent = `Harga: $${fmtPrice(lastCandle.close)} • ${new Date().toLocaleTimeString()}`;
+
+  drawChartWithLevels(candles);
 }
 
-function drawChart(canvas, candles, predictions) {
+function drawChartWithLevels(candles) {
+  const canvas = document.getElementById('price_chart');
+  if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0) return;
+
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.max(1, Math.floor(rect.width * dpr));
   canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const width = rect.width;
-  const height = rect.height;
-  ctx.clearRect(0, 0, width, height);
+  const w = rect.width;
+  const h = rect.height;
+  ctx.clearRect(0, 0, w, h);
 
-  if (!candles.length) {
-    ctx.fillStyle = '#a7a99b';
-    ctx.font = '14px Bahnschrift, Segoe UI, sans-serif';
-    ctx.fillText('Belum ada candle. Klik Backfill atau tunggu collector berjalan.', 24, 42);
-    return;
+  const pad = { left: 60, right: 85, top: 20, bottom: 20 };
+  const plotW = w - pad.left - pad.right;
+  const plotH = h - pad.top - pad.bottom;
+
+  const activePosition = state.positions.find(p => p.symbol === state.selectedSymbol);
+  let pricePoints = candles.map(c => Number(c.close)).concat(candles.map(c => Number(c.high)), candles.map(c => Number(c.low)));
+
+  if (activePosition) {
+    if (activePosition.entry_price) pricePoints.push(Number(activePosition.entry_price));
+    if (activePosition.take_profit_price) pricePoints.push(Number(activePosition.take_profit_price));
+    if (activePosition.stop_loss_price) pricePoints.push(Number(activePosition.stop_loss_price));
   }
 
-  const pad = { left: 62, right: 18, top: 18, bottom: 34 };
-  const plotW = width - pad.left - pad.right;
-  const plotH = height - pad.top - pad.bottom;
-  const lows = candles.map(c => Number(c.low));
-  const highs = candles.map(c => Number(c.high));
-  let min = Math.min(...lows);
-  let max = Math.max(...highs);
-  const span = max - min || max * 0.01 || 1;
+  let min = Math.min(...pricePoints);
+  let max = Math.max(...pricePoints);
+  const span = max - min || max * 0.01;
   min -= span * 0.08;
   max += span * 0.08;
 
-  const x = index => pad.left + (candles.length === 1 ? plotW : index * plotW / (candles.length - 1));
-  const y = price => pad.top + (max - price) * plotH / (max - min);
+  const nBars = candles.length > 1 ? candles.length - 1 : 1;
+  const getX = i => pad.left + (i * plotW / nBars);
+  const getY = p => pad.top + (max - p) * plotH / (max - min);
 
-  ctx.strokeStyle = 'rgba(242, 241, 232, 0.08)';
+  // Background Grid Lines
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
   ctx.lineWidth = 1;
-  ctx.font = '11px Bahnschrift, Segoe UI, sans-serif';
-  ctx.fillStyle = '#a7a99b';
-  for (let i = 0; i <= 4; i += 1) {
-    const yy = pad.top + i * plotH / 4;
-    const price = max - i * (max - min) / 4;
+  ctx.fillStyle = '#64748b';
+  ctx.font = '10px sans-serif';
+
+  for (let i = 0; i <= 3; i++) {
+    const yVal = pad.top + (i * plotH / 3);
+    const pVal = max - (i * (max - min) / 3);
     ctx.beginPath();
-    ctx.moveTo(pad.left, yy);
-    ctx.lineTo(width - pad.right, yy);
+    ctx.moveTo(pad.left, yVal);
+    ctx.lineTo(w - pad.right, yVal);
     ctx.stroke();
-    ctx.fillText(fmtPrice(price), 8, yy + 4);
+    ctx.fillText(fmtPrice(pVal), 8, yVal + 3);
   }
 
-  const candleW = Math.max(3, Math.min(9, plotW / candles.length * 0.55));
-  candles.forEach((candle, index) => {
-    const open = Number(candle.open);
-    const close = Number(candle.close);
-    const high = Number(candle.high);
-    const low = Number(candle.low);
-    const xx = x(index);
-    const color = close >= open ? '#30d158' : '#ff453a';
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.globalAlpha = 0.9;
-    ctx.beginPath();
-    ctx.moveTo(xx, y(high));
-    ctx.lineTo(xx, y(low));
-    ctx.stroke();
-    const top = Math.min(y(open), y(close));
-    const bodyH = Math.max(2, Math.abs(y(open) - y(close)));
-    ctx.fillRect(xx - candleW / 2, top, candleW, bodyH);
-    ctx.globalAlpha = 1;
-  });
+  // Draw Price Line
+  ctx.beginPath();
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < candles.length; i++) {
+    const xx = getX(i);
+    const yy = getY(Number(candles[i].close));
+    if (i === 0) ctx.moveTo(xx, yy);
+    else ctx.lineTo(xx, yy);
+  }
+  ctx.stroke();
 
-  const candleTimes = candles.map(c => new Date(c.time).getTime());
-  predictions.slice().reverse().forEach(prediction => {
-    const side = signalSide(prediction.prediction);
-    if (!['BUY', 'SELL'].includes(side)) return;
-    const targetTime = new Date(prediction.prediction_time).getTime();
-    let bestIndex = 0;
-    let bestDistance = Number.POSITIVE_INFINITY;
-    candleTimes.forEach((time, index) => {
-      const distance = Math.abs(time - targetTime);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestIndex = index;
-      }
-    });
-    const xx = x(bestIndex);
-    const yy = y(Number(prediction.entry_price));
-    ctx.fillStyle = side === 'BUY' ? '#30d158' : '#ff453a';
-    ctx.strokeStyle = '#10110f';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    if (side === 'BUY') {
-      ctx.moveTo(xx, yy - 12);
-      ctx.lineTo(xx - 7, yy + 3);
-      ctx.lineTo(xx + 7, yy + 3);
-    } else {
-      ctx.moveTo(xx, yy + 12);
-      ctx.lineTo(xx - 7, yy - 3);
-      ctx.lineTo(xx + 7, yy - 3);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-  });
+  // Subtle Area Gradient
+  ctx.lineTo(getX(candles.length - 1), h - pad.bottom);
+  ctx.lineTo(pad.left, h - pad.bottom);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.04)';
+  ctx.fill();
 
-  const position = state.positions.find(item => item.symbol === state.selectedSymbol);
-  if (position) {
-    [
-      ['TP', Number(position.take_profit_price), '#30d158'],
-      ['SL', Number(position.stop_loss_price), '#ff453a'],
-    ].forEach(([label, price, color]) => {
-      const yy = y(price);
-      if (yy < pad.top || yy > height - pad.bottom) return;
-      ctx.strokeStyle = color;
-      ctx.fillStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 5]);
+  // Draw Trade Execution Levels (Entry, TP, SL)
+  if (activePosition) {
+    const drawLevel = (price, label, color) => {
+      if (!price) return;
+      const yL = getY(price);
+      ctx.save();
       ctx.beginPath();
-      ctx.moveTo(pad.left, yy);
-      ctx.lineTo(width - pad.right, yy);
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.moveTo(pad.left, yL);
+      ctx.lineTo(w - pad.right, yL);
       ctx.stroke();
+
+      // Right label pill
       ctx.setLineDash([]);
-      ctx.fillText(`${label} ${fmtPrice(price)}`, width - pad.right - 92, yy - 6);
-    });
+      ctx.fillStyle = color;
+      ctx.fillRect(w - pad.right + 4, yL - 8, 76, 16);
+      ctx.fillStyle = '#090a0f';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.fillText(`${label}: ${fmtPrice(price)}`, w - pad.right + 7, yL + 4);
+      ctx.restore();
+    };
+
+    drawLevel(activePosition.entry_price, 'ENTRY', '#eab308');
+    drawLevel(activePosition.take_profit_price, 'TP', '#22c55e');
+    drawLevel(activePosition.stop_loss_price, 'SL', '#ef4444');
+  }
+}
+
+// ── Predictions Feed Table & Filters ─────────────────────────────────────────
+function setFeedFilter(filter) {
+  state.activeFilter = filter;
+  ['buysell', 'pending', 'done', 'all'].forEach(k => {
+    const btn = document.getElementById(`tab_${k}`);
+    if (btn) btn.classList.toggle('active', k.toUpperCase() === filter || (filter === 'BUYSELL' && k === 'buysell'));
+  });
+  renderFeedTable();
+}
+
+async function refreshPredictionsFeed() {
+  const list = await fetchApi('/api/predictions/recent?limit=40');
+  if (list && Array.isArray(list)) {
+    state.predictions = list;
+    renderFeedTable();
+  }
+}
+
+function renderFeedTable() {
+  const tbody = document.getElementById('feed_tbody');
+  if (!tbody) return;
+
+  if (!state.predictions.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="text-center muted">Belum ada sinyal tercatat.</td></tr>';
+    return;
   }
 
-  const last = candles[candles.length - 1];
-  ctx.fillStyle = '#f2f1e8';
-  ctx.font = '13px Bahnschrift, Segoe UI, sans-serif';
-  ctx.fillText(`Last ${fmtPrice(last.close)}`, pad.left, 16);
-}
+  let filtered = state.predictions;
+  if (state.activeFilter === 'BUYSELL') {
+    filtered = filtered.filter(r => ['BUY', 'SELL', 'UP', 'DOWN'].includes(r.prediction));
+  } else if (state.activeFilter === 'PENDING') {
+    filtered = filtered.filter(r => r.status === 'PENDING');
+  } else if (state.activeFilter === 'DONE') {
+    filtered = filtered.filter(r => r.status !== 'PENDING');
+  }
 
-async function refreshPredictions() {
-  const rows = await fetchJson('/api/predictions/recent?limit=120');
-  const tbody = document.getElementById('prediction_rows');
-  tbody.innerHTML = rows.map(r => {
-    const resultClass = r.result === 'CORRECT' ? 'correct' : r.result === 'WRONG' ? 'wrong' : r.result === 'NEUTRAL' ? 'neutral-badge' : 'pending';
-    return `<tr onclick="selectSymbol('${escapeHtml(r.symbol)}')">
-      <td>${escapeHtml(fmtTime(r.prediction_time))}</td>
-      <td>${escapeHtml(r.symbol)}</td>
-      <td>${badge(signalSide(r.prediction), signalClass(r.prediction))}</td>
-      <td>${r.confidence}%</td>
-      <td>${r.score_total}</td>
-      <td>${r.horizon_minutes}m</td>
-      <td>${badge(r.status, r.status === 'PENDING' ? 'pending' : 'correct')}</td>
-      <td>${badge(r.actual_direction || '-', (r.actual_direction?.startsWith('SL_') || r.actual_direction?.startsWith('NS_')) ? 'wrong' : r.actual_direction?.startsWith('TP_') ? 'correct' : 'pending')}</td>
-      <td>${badge(r.result || '-', resultClass)}</td>
-      <td>${r.actual_return_percent ?? '-'}</td>
-      <td>${escapeHtml(r.reason_summary || '-')}</td>
-    </tr>`;
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="11" class="text-center muted">Tidak ada data untuk filter '${state.activeFilter}'.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(r => {
+    const isBuy = ['BUY', 'UP'].includes(r.prediction);
+    const isSell = ['SELL', 'DOWN'].includes(r.prediction);
+    const badgeCls = isBuy ? 'badge-buy' : isSell ? 'badge-sell' : 'badge-hold';
+    const actionTxt = isBuy ? '🟢 BUY' : isSell ? '🔴 SELL' : '⚪ HOLD';
+
+    let resCls = 'muted';
+    let resTxt = r.result || '-';
+    if (r.result === 'CORRECT' || (r.actual_direction && r.actual_direction.startsWith('TP_'))) {
+      resCls = 'good';
+      resTxt = '✅ TAKE PROFIT';
+    } else if (r.result === 'WRONG' || (r.actual_direction && (r.actual_direction.startsWith('SL_') || r.actual_direction.startsWith('NS_')))) {
+      resCls = 'bad';
+      resTxt = '❌ STOP LOSS';
+    }
+
+    const retVal = r.actual_return_percent !== null && r.actual_return_percent !== undefined
+      ? `${r.actual_return_percent > 0 ? '+' : ''}${r.actual_return_percent.toFixed(2)}%`
+      : '-';
+
+    return `
+      <tr onclick="selectSymbol('${r.symbol}', true)">
+        <td class="muted">${fmtTime(r.prediction_time)}</td>
+        <td><strong>${r.symbol}</strong></td>
+        <td><span class="badge ${badgeCls}">${actionTxt}</span></td>
+        <td><b class="accent-text">${r.confidence ? r.confidence.toFixed(1) + '%' : '-'}</b></td>
+        <td>${fmtPrice(r.entry_price)}</td>
+        <td class="muted">${r.horizon_minutes}m</td>
+        <td><span class="status-pill status-${(r.status || '').toLowerCase()}">${r.status}</span></td>
+        <td class="${resCls}">${r.actual_direction || '-'}</td>
+        <td class="${resCls}"><strong>${resTxt}</strong></td>
+        <td class="${resCls}"><strong>${retVal}</strong></td>
+        <td class="reason-cell" title="${escapeHtml(r.reason_summary)}">${escapeHtml(r.reason_summary || '-')}</td>
+      </tr>
+    `;
   }).join('');
-  document.getElementById('last_refresh').textContent = 'Last refresh: ' + new Date().toLocaleTimeString();
 }
 
-async function refreshAll() {
-  await refreshStats();
-  await refreshPositions();
-  await refreshSymbols();
-  await Promise.all([refreshChart(), refreshPredictions()]);
+// ── Gemini & Copilot Chat Functions ──────────────────────────────────────────
+async function handleChatSubmit(e) {
+  e.preventDefault();
+  const input = document.getElementById('chat_input');
+  const msg = input.value.trim();
+  if (!msg || state.isChatBusy) return;
+
+  input.value = '';
+  await sendChatMessage(msg);
 }
 
-document.getElementById('symbol_select').addEventListener('change', event => {
-  selectSymbol(event.target.value);
-});
+function sendQuickPrompt(promptText) {
+  if (state.isChatBusy) return;
+  sendChatMessage(promptText);
+}
+
+async function sendChatMessage(msg) {
+  state.isChatBusy = true;
+  appendMessage('Anda', msg, false);
+
+  const loadingId = appendLoadingBubble();
+  const sendBtn = document.getElementById('chat_send_btn');
+  if (sendBtn) sendBtn.disabled = true;
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg }),
+    });
+    const data = await res.json();
+    removeLoadingBubble(loadingId);
+    appendMessage('AEGIS Copilot', data.reply || 'Maaf, tidak ada respon.', true);
+  } catch (err) {
+    removeLoadingBubble(loadingId);
+    appendMessage('AEGIS Copilot', `Terjadi kendala koneksi: ${err.message}`, true);
+  } finally {
+    state.isChatBusy = false;
+    if (sendBtn) sendBtn.disabled = false;
+  }
+}
+
+function appendMessage(sender, text, isAi) {
+  const container = document.getElementById('chat_messages');
+  if (!container) return;
+
+  const bubble = document.createElement('div');
+  bubble.className = `chat-bubble ${isAi ? 'bubble-ai' : 'bubble-user'}`;
+  bubble.innerHTML = `
+    <div class="bubble-sender">${escapeHtml(sender)}</div>
+    <div class="bubble-content">${formatMarkdown(text)}</div>
+  `;
+  container.appendChild(bubble);
+  container.scrollTop = container.scrollHeight;
+}
+
+function appendLoadingBubble() {
+  const container = document.getElementById('chat_messages');
+  if (!container) return null;
+
+  const id = 'loading_' + Date.now();
+  const bubble = document.createElement('div');
+  bubble.id = id;
+  bubble.className = 'chat-bubble bubble-ai bubble-loading';
+  bubble.innerHTML = `
+    <div class="bubble-sender">AEGIS Copilot</div>
+    <div class="bubble-content"><span class="typing-indicator">Menganalisis data...</span></div>
+  `;
+  container.appendChild(bubble);
+  container.scrollTop = container.scrollHeight;
+  return id;
+}
+
+function removeLoadingBubble(id) {
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+// ── Realtime Synchronization Loop ────────────────────────────────────────────
+async function syncAll(forceChart = false) {
+  await Promise.all([
+    refreshMetricsAndOrders(),
+    refreshPredictionsFeed(),
+    refreshChart(forceChart),
+  ]);
+}
+
+// ── Startup & Lifecycle ──────────────────────────────────────────────────────
+async function startup() {
+  await initSymbols();
+  await refreshAiBadge();
+  await syncAll(true);
+
+  // Continuous 2.5-second Realtime Loop
+  setInterval(() => {
+    if (!document.hidden && state.isPolling) {
+      syncAll(false);
+    }
+  }, state.pollIntervalMs);
+}
 
 window.addEventListener('resize', () => {
-  drawChart(document.getElementById('price_chart'), state.candles, state.predictions);
+  if (state.candles.length > 0) {
+    drawChartWithLevels(state.candles);
+  }
 });
 
-refreshAll();
-setInterval(refreshAll, 5000);
+startup();
