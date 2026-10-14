@@ -88,6 +88,19 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df['return_3'] = close.pct_change(3)
     df['return_6'] = close.pct_change(6)
 
+    # 8. Trend strength (ADX-14) and realised volatility
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
+    atr_w = tr.ewm(alpha=1 / 14, min_periods=14).mean().replace(0, 1e-12)
+    plus_di = 100 * plus_dm.ewm(alpha=1 / 14, min_periods=14).mean() / atr_w
+    minus_di = 100 * minus_dm.ewm(alpha=1 / 14, min_periods=14).mean() / atr_w
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1e-12)
+    df['adx_14'] = dx.ewm(alpha=1 / 14, min_periods=14).mean()
+    df['di_diff'] = (plus_di - minus_di) / 100.0
+    df['ret_std_20'] = df['return_1'].rolling(20).std()
+
     return df
 
 
@@ -99,4 +112,5 @@ FEATURE_COLUMNS = [
     'bb_pct_b', 'bb_width', 'atr_ratio',
     'volume_ratio', 'body_ratio', 'upper_wick_ratio', 'lower_wick_ratio',
     'return_1', 'return_3', 'return_6',
+    'adx_14', 'di_diff', 'ret_std_20',
 ]

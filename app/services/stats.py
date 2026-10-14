@@ -16,6 +16,7 @@ def summary(db: Session) -> dict:
     take_profit = db.query(func.count(PredictionResult.id)).filter(PredictionResult.actual_direction.like('TP_%')).scalar() or 0
     stop_loss = db.query(func.count(PredictionResult.id)).filter(PredictionResult.actual_direction.like('SL_%')).scalar() or 0
     near_stop = db.query(func.count(PredictionResult.id)).filter(PredictionResult.actual_direction.like('NS_%')).scalar() or 0
+    breakeven = db.query(func.count(PredictionResult.id)).filter(PredictionResult.actual_direction.like('BE_%')).scalar() or 0
     denom = correct + wrong
     directional_accuracy = (correct / denom) if denom else 0
     total_accuracy = (correct / total_predictions) if total_predictions else 0
@@ -38,6 +39,10 @@ def summary(db: Session) -> dict:
             unrealized_pnl_usd += paper_pnl_usd(signal_side(pred.prediction), pred.entry_price, latest_candle.close_price)
 
     total_pnl_usd = realized_pnl_usd + unrealized_pnl_usd
+
+    from app.services.prediction_engine import performance_guard_status
+    guard = performance_guard_status(db)
+
     return {
         'total_predictions': total_predictions,
         'pending': pending,
@@ -47,6 +52,7 @@ def summary(db: Session) -> dict:
         'take_profit': take_profit,
         'stop_loss': stop_loss,
         'near_stop': near_stop,
+        'breakeven': breakeven,
         'directional_accuracy': round(directional_accuracy * 100, 2),
         'total_accuracy': round(total_accuracy * 100, 2),
         'paper_position_usd': settings.paper_position_usd,
@@ -56,5 +62,11 @@ def summary(db: Session) -> dict:
         'realized_pnl_usd': round(realized_pnl_usd, 6),
         'unrealized_pnl_usd': round(unrealized_pnl_usd, 6),
         'total_pnl_usd': round(total_pnl_usd, 6),
+        'take_profit_percent': settings.take_profit_percent,
+        'stop_loss_percent': settings.stop_loss_percent,
+        'max_open_positions': settings.max_open_positions,
+        'round_trip_cost_percent': settings.round_trip_cost,
+        'live_trading_enabled': settings.live_trading_enabled,
         'sample_warning': total_predictions < 1000,
+        'guard': guard,
     }

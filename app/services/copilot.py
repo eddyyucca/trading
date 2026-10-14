@@ -153,7 +153,9 @@ async def ask_gemini_copilot(message: str) -> str:
     finally:
         db.close()
 
-    api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+    from app.core.config import get_settings
+    settings = get_settings()
+    api_key = settings.gemini_api_key or os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
 
     if not api_key:
         return generate_local_fallback_reply(message, ctx)
@@ -172,12 +174,23 @@ async def ask_gemini_copilot(message: str) -> str:
             "Jawab pertanyaan pengguna secara akurat, lugas, dan mengacu pada data fakta di atas."
         )
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=message,
-            config={'system_instruction': system_instruction},
-        )
-        return response.text
+        candidate_models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest']
+        last_err = None
+        for m in candidate_models:
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=message,
+                    config={'system_instruction': system_instruction},
+                )
+                return response.text
+            except Exception as e:
+                last_err = e
+                continue
+
+        if last_err:
+            print(f"[!] Gemini API Error: {last_err}, using local fallback...")
+        return generate_local_fallback_reply(message, ctx)
     except Exception as e:
-        print(f"[!] Gemini API Error: {e}, using local fallback...")
+        print(f"[!] Gemini Client Error: {e}, using local fallback...")
         return generate_local_fallback_reply(message, ctx)

@@ -29,6 +29,10 @@ def apply_triple_barrier_labels(
     df = df.copy()
     n = len(df)
     labels = np.zeros(n, dtype=int)
+    # Gross realised return of a long / short opened at close[i] under the same
+    # rules (TP, SL, timeout at horizon close). Used for expectancy evaluation.
+    long_ret = np.zeros(n)
+    short_ret = np.zeros(n)
 
     closes = df['close_price'].values
     highs = df['high_price'].values
@@ -48,6 +52,7 @@ def apply_triple_barrier_labels(
         short_win = False
         short_loss = False
 
+        last_j = min(i + horizon_bars, n - 1)
         # Scan forward horizon
         for j in range(i + 1, min(i + 1 + horizon_bars, n)):
             f_high = highs[j]
@@ -70,6 +75,10 @@ def apply_triple_barrier_labels(
             if (long_win or long_loss) and (short_win or short_loss):
                 break
 
+        timeout_ret = closes[last_j] / entry_price - 1.0
+        long_ret[i] = tp_pct if long_win else (-sl_pct if long_loss else timeout_ret)
+        short_ret[i] = tp_pct if short_win else (-sl_pct if short_loss else -timeout_ret)
+
         if long_win and not short_win:
             labels[i] = LABEL_BUY
         elif short_win and not long_win:
@@ -80,4 +89,6 @@ def apply_triple_barrier_labels(
     # Last horizon_bars cannot be evaluated (no forward data)
     labels[n - horizon_bars:] = LABEL_HOLD
     df['target_label'] = labels
+    df['long_ret'] = long_ret
+    df['short_ret'] = short_ret
     return df

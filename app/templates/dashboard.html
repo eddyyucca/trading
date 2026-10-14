@@ -3,73 +3,112 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AEGIS AI - Realtime Quant Trading Dashboard</title>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>AEGIS AI - Autonomous Quant Trading Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261014_03" />
+
+  <!-- Global Error Logger Banner -->
+  <script>
+    window.onerror = function(msg, url, line, col, error) {
+      var b = document.getElementById('debug_error_banner');
+      if (b) {
+        b.style.display = 'flex';
+        b.innerHTML = '<span>⚠️ JavaScript Error: ' + msg + ' (' + line + ':' + col + ')</span><button onclick="this.parentElement.style.display=\'none\'" style="background:#000;color:#fff;border:none;padding:2px 8px;border-radius:4px;cursor:pointer;">Tutup</button>';
+      }
+      return false;
+    };
+    window.onunhandledrejection = function(e) {
+      var b = document.getElementById('debug_error_banner');
+      if (b) {
+        b.style.display = 'flex';
+        var reason = e.reason ? (e.reason.message || e.reason) : 'Unknown Promise Error';
+        b.innerHTML = '<span>⚠️ Async Error: ' + reason + '</span><button onclick="this.parentElement.style.display=\'none\'" style="background:#000;color:#fff;border:none;padding:2px 8px;border-radius:4px;cursor:pointer;">Tutup</button>';
+      }
+    };
+  </script>
 </head>
 <body>
-  <div class="app-layout">
+  <!-- Floating Debug Banner if error occurs -->
+  <div id="debug_error_banner" class="debug-error-banner" style="display:none;"></div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast_container"></div>
+
+  <div class="app-layout" id="app_layout">
     <!-- MAIN COLUMN (LEFT / CENTER) -->
-    <div class="main-content">
+    <main class="main-content">
       <!-- Topbar Header -->
       <header class="topbar">
         <div class="brand">
           <div class="brand-tags">
             <span class="live-pill"><span class="pulse-dot"></span> LIVE 2.5s</span>
             <span id="ai_badge" class="ai-pill">AEGIS: v1.0.0-xgb (Aktif)</span>
+            <span id="guard_badge" class="guard-pill guard-active">🛡️ GUARD: AKTIF</span>
           </div>
-          <h1>AEGIS <span class="tagline">// Autonomous Quant Trading Engine</span></h1>
-          <p class="subtitle">Sistem Prediksi Futures Kuantitatif Berbasis Otak Lokal (Ryzen AI & RTX 4060)</p>
+          <div class="brand-title-wrap">
+            <h1>AEGIS <span class="tagline">// Autonomous Quant Trading Engine</span></h1>
+          </div>
+          <p class="subtitle">Sistem Prediksi & Eksekusi Futures Kuantitatif (Ryzen AI & RTX 4060)</p>
         </div>
 
         <div class="topbar-actions">
-          <button class="btn btn-predict" onclick="apiAction('/api/predict/run-once', 'Memindai Peluang & Eksekusi AI...')">
-            ⚡ Analisis & Eksekusi AI
+          <button class="btn btn-predict" id="btn_predict" onclick="apiAction('/api/predict/run-once', 'Memindai Peluang & Eksekusi AI', 'btn_predict')">
+            ⚡ Scan Peluang AI
           </button>
-          <button class="btn btn-eval" onclick="apiAction('/api/evaluator/run-once', 'Mengevaluasi TP/SL...')">
+          <button class="btn btn-eval" id="btn_eval" onclick="apiAction('/api/evaluator/run-once', 'Mengevaluasi TP/SL', 'btn_eval')">
             ⚖️ Cek TP/SL
           </button>
-          <button class="btn" onclick="apiAction('/api/collector/run-once', 'Mengambil Candle Baru...')">
+          <button class="btn" id="btn_collect" onclick="apiAction('/api/collector/run-once', 'Mengambil Candle Baru', 'btn_collect')">
             📥 Ambil Data
           </button>
-          <button class="btn" onclick="triggerRetrain()">
+          <button class="btn" id="btn_retrain" onclick="triggerRetrain('btn_retrain')">
             🎓 Retrain AI
+          </button>
+          <button class="btn btn-toggle-chat" id="btn_toggle_chat" onclick="toggleChatSidebar()" title="Buka/Tutup Chat Copilot">
+            💬 Chat
           </button>
         </div>
       </header>
 
-      <!-- Key Metrics Row -->
+      <!-- Key Metrics Row (4 Prominent Executive Cards) -->
       <section class="metric-grid">
         <div class="metric-card">
-          <span class="m-lbl">Total PnL (Floating + Realized)</span>
+          <span class="m-lbl">Total Net PnL</span>
           <strong id="total_pnl" class="m-val">$0.00</strong>
+          <div class="m-sub">
+            <span>Float: <b id="unrealized_pnl">$0.00</b></span>
+            <span>Realized: <b id="realized_pnl">$0.00</b></span>
+          </div>
         </div>
-        <div class="metric-card">
-          <span class="m-lbl">Floating PnL (Berjalan)</span>
-          <strong id="unrealized_pnl" class="m-val">$0.00</strong>
-        </div>
-        <div class="metric-card">
-          <span class="m-lbl">Realized PnL (Tutup)</span>
-          <strong id="realized_pnl" class="m-val">$0.00</strong>
-        </div>
+
         <div class="metric-card">
           <span class="m-lbl">Akurasi Win-Rate</span>
           <strong id="directional_accuracy" class="m-val">0%</strong>
+          <div class="m-sub">
+            <span class="good">TP: <b id="tp_count">0</b></span>
+            <span class="accent-text">BE: <b id="be_count">0</b></span>
+            <span class="bad">SL: <b id="sl_count">0</b></span>
+          </div>
         </div>
+
         <div class="metric-card">
-          <span class="m-lbl">Posisi Aktif</span>
+          <span class="m-lbl">Posisi Sedang Berjalan</span>
           <strong id="pending_count" class="m-val accent-text">0 Posisi</strong>
+          <div class="m-sub">
+            <span>Notional: <b id="total_notional_usd">$0.00</b></span>
+            <span>Maks: <b id="max_positions">-</b></span>
+          </div>
         </div>
+
         <div class="metric-card">
-          <span class="m-lbl">Take Profit Hit</span>
-          <strong id="tp_count" class="m-val good">0</strong>
-        </div>
-        <div class="metric-card">
-          <span class="m-lbl">Stop Loss Hit</span>
-          <strong id="sl_count" class="m-val bad">0</strong>
-        </div>
-        <div class="metric-card">
-          <span class="m-lbl">Futures Mode</span>
-          <strong id="futures_mode" class="m-val">10x</strong>
+          <span class="m-lbl">Mode Sistem</span>
+          <strong id="futures_mode" class="m-val">Simulasi Futures</strong>
+          <div class="m-sub">
+            <span>Margin/Trade: <b id="margin_per_trade">-</b></span>
+            <span id="mode_risk" class="good">Risk: <b>Paper Trading</b></span>
+          </div>
         </div>
       </section>
 
@@ -78,12 +117,15 @@
         <div class="panel-header">
           <div>
             <h2>🚀 Tindakan Eksekusi AEGIS yang Sedang Berjalan (Active Trades)</h2>
-            <span class="muted">Posisi BUY & SELL riil yang sedang dibuka oleh model AI. Klik kartu untuk melihat di grafik.</span>
+            <span class="muted">Posisi BUY & SELL riil yang sedang dibuka oleh model AI. Klik kartu untuk melihatnya di grafik.</span>
           </div>
           <span id="active_trade_badge" class="badge-pill">0 Posisi Berjalan</span>
         </div>
         <div id="active_orders_grid" class="orders-grid">
-          <!-- Injected via JS -->
+          <div class="empty-trades">
+            <div class="empty-icon">⏳</div>
+            <strong>Memuat data posisi aktif...</strong>
+          </div>
         </div>
       </section>
 
@@ -92,32 +134,61 @@
         <div class="panel-header">
           <div class="panel-title-group">
             <h2 id="chart_title">Grafik Pergerakan Harga</h2>
-            <span id="chart_status" class="muted">Memuat data...</span>
+            <span id="chart_status" class="chart-status-badge">Memuat data harga...</span>
           </div>
           <div class="chart-controls">
-            <select id="symbol_select" title="Pilih koin"></select>
+            <select id="symbol_select" class="coin-selector" title="Pilih koin"></select>
+            <div class="tf-selector">
+              <button class="tf-btn active" data-tf="1m" onclick="setTimeframe('1m')">1m</button>
+              <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')">5m</button>
+              <button class="tf-btn" data-tf="15m" onclick="setTimeframe('15m')">15m</button>
+            </div>
             <button class="btn-subtle btn-sm" onclick="refreshChart(true)">🔄 Refresh</button>
           </div>
         </div>
 
         <!-- Ribbon Status Koin Terpilih -->
         <div id="trade_ribbon" class="trade-ribbon">
-          <div class="ribbon-item"><span>Status Sinyal</span><strong id="ribbon_side">HOLD</strong></div>
-          <div class="ribbon-item"><span>Keyakinan AI</span><strong id="ribbon_conf">-</strong></div>
-          <div class="ribbon-item"><span>Harga Entry</span><strong id="ribbon_entry">-</strong></div>
-          <div class="ribbon-item"><span>Target TP (+0.35%)</span><strong id="ribbon_tp" class="good">-</strong></div>
-          <div class="ribbon-item"><span>Batas SL (-0.20%)</span><strong id="ribbon_sl" class="bad">-</strong></div>
-          <div class="ribbon-item"><span>Floating PnL</span><strong id="ribbon_pnl">-</strong></div>
-          <div class="ribbon-item"><span>Target Waktu</span><strong id="ribbon_due">-</strong></div>
+          <div class="ribbon-item">
+            <span>Status Sinyal</span>
+            <strong id="ribbon_side">HOLD</strong>
+          </div>
+          <div class="ribbon-item">
+            <span>Keyakinan AI</span>
+            <strong id="ribbon_conf">Memantau Pasar</strong>
+          </div>
+          <div class="ribbon-item">
+            <span>Harga Masuk / Pasar</span>
+            <strong id="ribbon_entry">-</strong>
+          </div>
+          <div class="ribbon-item">
+            <span>Target TP <span id="lbl_tp"></span></span>
+            <strong id="ribbon_tp" class="good">-</strong>
+          </div>
+          <div class="ribbon-item">
+            <span>Batas SL <span id="lbl_sl"></span></span>
+            <strong id="ribbon_sl" class="bad">-</strong>
+          </div>
+          <div class="ribbon-item">
+            <span>Floating PnL</span>
+            <strong id="ribbon_pnl">$0.00</strong>
+          </div>
+          <div class="ribbon-item">
+            <span>Status Proteksi</span>
+            <strong id="ribbon_prot">NORMAL</strong>
+          </div>
         </div>
 
-        <div class="chart-wrapper">
-          <canvas id="price_chart"></canvas>
+        <div class="chart-wrapper" id="chart_wrapper">
+          <canvas id="price_chart" width="900" height="280"></canvas>
           <div class="chart-legend">
-            <span><i class="legend-color legend-price"></i> Harga 1m</span>
-            <span><i class="legend-color legend-entry"></i> Entry</span>
-            <span><i class="legend-color legend-tp"></i> Target TP</span>
-            <span><i class="legend-color legend-sl"></i> Stop Loss</span>
+            <span><i class="legend-color" style="background:#22c55e;"></i> Lilin Naik</span>
+            <span><i class="legend-color" style="background:#f43f5e;"></i> Lilin Turun</span>
+            <span><i class="legend-color" style="background:#38bdf8;"></i> Harga Live</span>
+            <span><i class="legend-color" style="background:#facc15;"></i> MA-9</span>
+            <span><i class="legend-color" style="background:#eab308;"></i> Entry</span>
+            <span><i class="legend-color" style="background:#22c55e;"></i> Target TP</span>
+            <span><i class="legend-color" style="background:#f43f5e;"></i> Stop Loss</span>
           </div>
         </div>
       </section>
@@ -132,55 +203,55 @@
           <div class="filter-tabs">
             <button id="tab_buysell" class="tab-btn active" onclick="setFeedFilter('BUYSELL')">🔥 Tindakan BUY & SELL</button>
             <button id="tab_pending" class="tab-btn" onclick="setFeedFilter('PENDING')">⏳ Masih Berjalan</button>
-            <button id="tab_done" class="tab-btn" onclick="setFeedFilter('DONE')">✅ Selesai (TP / SL)</button>
-            <button id="tab_all" class="tab-btn" onclick="setFeedFilter('ALL')">Semua (Termasuk HOLD)</button>
+            <button id="tab_done" class="tab-btn" onclick="setFeedFilter('DONE')">✅ Selesai (TP / SL / BE)</button>
+            <button id="tab_all" class="tab-btn" onclick="setFeedFilter('ALL')">Semua Transaksi</button>
           </div>
         </div>
 
         <div class="table-wrapper">
-          <table>
+          <table class="data-table">
             <thead>
               <tr>
                 <th>Waktu</th>
-                <th>Simbol</th>
+                <th>Koin</th>
                 <th>Tindakan AI</th>
-                <th>Probabilitas</th>
+                <th>Keyakinan</th>
                 <th>Harga Entry</th>
-                <th>Horizon</th>
                 <th>Status Order</th>
-                <th>Arah Keluar</th>
-                <th>Hasil</th>
+                <th>Hasil Evaluasi</th>
                 <th>Return PnL</th>
-                <th>Alasan & Rincian Probabilitas Model</th>
+                <th>Alasan Keputusan AI</th>
               </tr>
             </thead>
             <tbody id="feed_tbody">
-              <!-- Injected via JS -->
+              <tr><td colspan="9" class="text-center muted" style="padding: 24px;">Memuat data riwayat sinyal...</td></tr>
             </tbody>
           </table>
         </div>
       </section>
-    </div>
+    </main>
 
     <!-- RIGHT COLUMN: CHAT COPILOT DIBANTU GEMINI -->
-    <aside class="chat-sidebar">
+    <aside class="chat-sidebar" id="chat_sidebar">
       <div class="chat-header">
         <div class="chat-header-title">
           <span class="chat-icon">✨</span>
           <div>
             <h3>AEGIS Copilot</h3>
-            <span class="chat-subtitle">Didukung Google Gemini + Otak Lokal</span>
+            <span class="chat-subtitle">Google Gemini + Otak Lokal</span>
           </div>
         </div>
-        <span class="copilot-badge">Online</span>
+        <div class="chat-header-controls">
+          <span class="copilot-badge">Online</span>
+        </div>
       </div>
 
       <!-- Quick Suggestion Chips -->
       <div class="suggestion-chips">
-        <button class="chip" onclick="sendQuickPrompt('Kenapa AEGIS buka posisi di XRP?')">🎯 Kenapa jual XRP?</button>
-        <button class="chip" onclick="sendQuickPrompt('Bagaimana ringkasan performa trading saat ini?')">📊 Ringkasan PnL</button>
+        <button class="chip" onclick="sendQuickPrompt('Jelaskan posisi apa saja yang sedang aktif dibuka saat ini?')">🎯 Posisi Aktif Saat Ini</button>
+        <button class="chip" onclick="sendQuickPrompt('Bagaimana ringkasan performa trading dan akurasi sistem hari ini?')">📊 Ringkasan PnL</button>
         <button class="chip" onclick="sendQuickPrompt('Jelaskan strategi dan cara kerja model AEGIS')">🧠 Strategi AEGIS</button>
-        <button class="chip" onclick="sendQuickPrompt('Apakah posisi yang terbuka saat ini aman dari risiko?')">⚖️ Cek Risiko</button>
+        <button class="chip" onclick="sendQuickPrompt('Bagaimana sistem proteksi Breakeven Stop melindungi modal?')">🛡️ Cek Proteksi Risiko</button>
       </div>
 
       <!-- Messages Stream -->
@@ -188,7 +259,7 @@
         <div class="chat-bubble bubble-ai">
           <div class="bubble-sender">AEGIS Copilot</div>
           <div class="bubble-content">
-            Halo! Saya adalah asisten analitik Anda. Saya membaca seluruh data database lokal AEGIS secara real-time. Tanyakan apa saja tentang alasan di balik keputusan BUY/SELL, performa portofolio, atau kondisi pasar saat ini!
+            Halo! Saya adalah juru bicara resmi AEGIS Quant Engine. Saya terhubung langsung ke database lokal dan model XGBoost secara real-time. Tanyakan apa saja tentang posisi yang sedang terbuka, performa trading, atau alasan di balik setiap keputusan!
           </div>
         </div>
       </div>
@@ -200,7 +271,7 @@
             <input 
               type="text" 
               id="chat_input" 
-              placeholder="Tanyakan ke AEGIS & Gemini..." 
+              placeholder="Tanyakan ke AEGIS..." 
               autocomplete="off" 
             />
             <button type="submit" id="chat_send_btn" class="btn-send" title="Kirim">
@@ -212,12 +283,852 @@
 
       <!-- Mini System Log -->
       <div class="mini-console">
-        <span class="mini-console-title">System Console:</span>
-        <pre id="console_log">AEGIS aktif. Sistem memantau pasar real-time.</pre>
+        <span class="mini-console-title">Status Sistem:</span>
+        <pre id="console_log">AEGIS aktif. Sistem memantau pasar Binance real-time.</pre>
       </div>
     </aside>
   </div>
 
-  <script src="/static/app.js"></script>
+  <!-- INLINE CONTROLLER SCRIPT (100% Caching Immune & Standalone Bulletproof) -->
+  <script>
+    // Automatically detect API Base URL:
+    // If opened on port 8010, use relative paths.
+    // If opened via Apache (port 80), file://, or other port, route explicitly to FastAPI port 8010.
+    const API_BASE = (window.location.origin && window.location.origin.includes(':8010'))
+      ? ''
+      : 'http://127.0.0.1:8010';
+
+    // State Store
+    const state = {
+      symbols: [],
+      selectedSymbol: null,
+      selectedTimeframe: '1m',
+      positions: [],
+      predictions: [],
+      candles: [],
+      activeFilter: 'BUYSELL',
+      pollIntervalMs: 2500,
+      isPolling: true,
+      isChatBusy: false,
+    };
+
+    // Toast Notification System (Top-Right Alert Bubbles)
+    function showToast(message, type = 'info') {
+      var container = document.getElementById('toast_container');
+      if (!container) return;
+      var el = document.createElement('div');
+      el.className = 'toast toast-' + type;
+      var icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+      el.innerHTML = '<span style="font-size:16px;">' + icon + '</span><span>' + escapeHtml(message) + '</span>';
+      container.appendChild(el);
+      setTimeout(function() {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(-12px)';
+        el.style.transition = 'all 0.3s ease';
+        setTimeout(function() { el.remove(); }, 300);
+      }, 4000);
+    }
+
+    // Bulletproof API Fetcher
+    async function fetchApi(url, opts = {}) {
+      const fullUrl = url.startsWith('http') ? url : (API_BASE + url);
+      try {
+        const res = await fetch(fullUrl, opts);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return await res.json();
+      } catch (err) {
+        console.error('API Error [' + fullUrl + ']:', err);
+        return null;
+      }
+    }
+
+    // Formatters
+    function fmtPrice(val) {
+      if (val === null || val === undefined || isNaN(val)) return '-';
+      const n = Number(val);
+      return n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n.toFixed(6);
+    }
+
+    function fmtUsd(val) {
+      if (val === null || val === undefined || isNaN(val)) return '$0.00';
+      const n = Number(val);
+      const sign = n > 0 ? '+' : '';
+      return sign + '$' + n.toFixed(4);
+    }
+
+    function fmtTime(val) {
+      if (!val) return '-';
+      return val.replace('T', ' ').slice(11, 19);
+    }
+
+    function escapeHtml(str) {
+      return String(str ?? '').replace(/[&<>"']/g, function(ch) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+      });
+    }
+
+    function formatMarkdown(text) {
+      if (!text) return '';
+      let formatted = escapeHtml(text);
+      formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
+      formatted = formatted.replace(/• (.*?)(?:\n|$)/g, '<li>$1</li>');
+      if (formatted.includes('<li>')) {
+        formatted = formatted.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+      }
+      formatted = formatted.replace(/\n/g, '<br/>');
+      return formatted;
+    }
+
+    // Topbar Actions with Button Visual Feedback
+    async function apiAction(url, label, btnId = null) {
+      const btn = btnId ? document.getElementById(btnId) : null;
+      let originalHtml = '';
+      if (btn) {
+        originalHtml = btn.innerHTML;
+        btn.classList.add('loading');
+        btn.disabled = true;
+        btn.innerHTML = '<span>⏳ Memproses...</span>';
+      }
+
+      showToast('⏳ ' + label + ' sedang dijalankan...', 'info');
+      const log = document.getElementById('console_log');
+      if (log) log.textContent = '[*] ' + label + '...';
+
+      const fullUrl = url.startsWith('http') ? url : (API_BASE + url);
+      try {
+        const res = await fetch(fullUrl, { method: 'POST' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        showToast('✅ Berhasil: ' + label + ' selesai!', 'success');
+        if (log) log.textContent = '[✓ Sukses]:\n' + JSON.stringify(data, null, 2);
+        await syncAll(true);
+      } catch (err) {
+        showToast('❌ Gagal: ' + err.message, 'error');
+        if (log) log.textContent = '[✗ Error]: ' + err.message;
+      } finally {
+        if (btn) {
+          btn.classList.remove('loading');
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        }
+      }
+    }
+
+    async function triggerRetrain(btnId = 'btn_retrain') {
+      const btn = document.getElementById(btnId);
+      let originalHtml = '';
+      if (btn) {
+        originalHtml = btn.innerHTML;
+        btn.classList.add('loading');
+        btn.disabled = true;
+        btn.innerHTML = '<span>⏳ Retraining AI...</span>';
+      }
+
+      showToast('🧠 Melatih ulang model penantang XGBoost...', 'info');
+      const log = document.getElementById('console_log');
+      if (log) log.textContent = '[*] Melatih ulang model penantang...';
+
+      const fullUrl = API_BASE + '/api/ai/retrain';
+      try {
+        const res = await fetch(fullUrl, { method: 'POST' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        showToast('✅ Auto-Learner: Model Challenger Selesai Dilatih!', 'success');
+        if (log) log.textContent = '[✓ Retrain Selesai]:\n' + JSON.stringify(data, null, 2);
+        await refreshAiBadge();
+        await syncAll(true);
+      } catch (err) {
+        showToast('❌ Gagal Retrain: ' + err.message, 'error');
+        if (log) log.textContent = '[✗ Retrain Error]: ' + err.message;
+      } finally {
+        if (btn) {
+          btn.classList.remove('loading');
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        }
+      }
+    }
+
+    function toggleChatSidebar() {
+      const layout = document.getElementById('app_layout');
+      if (layout) {
+        layout.classList.toggle('chat-collapsed');
+        showToast(layout.classList.contains('chat-collapsed') ? 'Sidebar chat disembunyikan' : 'Sidebar chat ditampilkan', 'info');
+      }
+    }
+
+    // Badges & Status Sync
+    async function refreshAiBadge() {
+      const data = await fetchApi('/api/ai/status');
+      if (!data) return;
+      const badge = document.getElementById('ai_badge');
+      const ver = data.version || 'v1.0.0-xgb';
+      if (badge) badge.textContent = 'AEGIS: ' + ver + ' (' + (data.active ? 'Aktif' : 'Standby') + ')';
+    }
+
+    // Metrics & Active Orders Sync
+    async function refreshMetricsAndOrders() {
+      const [stats, positions] = await Promise.all([
+        fetchApi('/api/stats/summary'),
+        fetchApi('/api/positions/active'),
+      ]);
+
+      if (stats) {
+        const totPnl = document.getElementById('total_pnl');
+        if (totPnl) {
+          totPnl.textContent = fmtUsd(stats.total_pnl_usd);
+          totPnl.className = 'm-val ' + (stats.total_pnl_usd >= 0 ? 'good' : 'bad');
+        }
+
+        const unPnl = document.getElementById('unrealized_pnl');
+        if (unPnl) {
+          unPnl.textContent = fmtUsd(stats.unrealized_pnl_usd);
+          unPnl.className = stats.unrealized_pnl_usd >= 0 ? 'good' : 'bad';
+        }
+
+        const rePnl = document.getElementById('realized_pnl');
+        if (rePnl) {
+          rePnl.textContent = fmtUsd(stats.realized_pnl_usd);
+          rePnl.className = stats.realized_pnl_usd >= 0 ? 'good' : 'bad';
+        }
+
+        const dirAcc = document.getElementById('directional_accuracy');
+        if (dirAcc) dirAcc.textContent = (stats.directional_accuracy ?? 0) + '%';
+
+        const tpC = document.getElementById('tp_count');
+        if (tpC) tpC.textContent = stats.take_profit ?? 0;
+
+        const beC = document.getElementById('be_count');
+        if (beC) beC.textContent = stats.breakeven ?? 0;
+
+        const slC = document.getElementById('sl_count');
+        if (slC) slC.textContent = (stats.stop_loss ?? 0) + (stats.near_stop ?? 0);
+
+        const pend = document.getElementById('pending_count');
+        if (pend) pend.textContent = (stats.pending ?? 0) + ' Posisi';
+
+        const totNotional = document.getElementById('total_notional_usd');
+        if (totNotional) {
+          const notionalPerTrade = stats.position_notional_usd || 0;
+          totNotional.textContent = '$' + (((stats.pending || 0) * notionalPerTrade).toFixed(2));
+        }
+
+        state.cfg = {
+          tp: stats.take_profit_percent, sl: stats.stop_loss_percent,
+        };
+        const setTxt = function(id, t) { const e = document.getElementById(id); if (e) e.textContent = t; };
+        setTxt('max_positions', (stats.max_open_positions ?? '-') + ' Posisi');
+        setTxt('margin_per_trade', '$' + Number(stats.paper_position_usd ?? 0).toFixed(2));
+        setTxt('futures_mode', (stats.futures_mode ? 'Simulasi Futures ' + stats.futures_leverage + 'x' : 'Simulasi Spot 1x'));
+        const modeRisk = document.getElementById('mode_risk');
+        if (modeRisk) modeRisk.innerHTML = stats.live_trading_enabled
+          ? 'Risk: <b>LIVE TRADING (uang riil)</b>' : 'Risk: <b>Paper Trading</b>';
+        if (modeRisk) modeRisk.className = stats.live_trading_enabled ? 'bad' : 'good';
+        if (state.cfg.tp != null) {
+          setTxt('lbl_tp', '(+' + (state.cfg.tp * 100).toFixed(2) + '%)');
+          setTxt('lbl_sl', '(-' + (state.cfg.sl * 100).toFixed(2) + '%)');
+        }
+
+        const guardBadge = document.getElementById('guard_badge');
+        if (guardBadge && stats.guard) {
+          if (stats.guard.blocked) {
+            guardBadge.textContent = '🛡️ GUARD: COOLDOWN (Volatilitas)';
+            guardBadge.className = 'guard-pill guard-paused';
+          } else {
+            guardBadge.textContent = '🛡️ GUARD: AKTIF (Aman)';
+            guardBadge.className = 'guard-pill guard-active';
+          }
+        }
+      }
+
+      if (positions) {
+        state.positions = Array.isArray(positions) ? positions : [];
+        const badge = document.getElementById('active_trade_badge');
+        if (badge) badge.textContent = state.positions.length + ' Posisi Berjalan';
+        renderActiveOrdersGrid();
+      }
+
+      updateRibbonDisplay();
+    }
+
+    // Active Orders Grid Rendering
+    function renderActiveOrdersGrid() {
+      const container = document.getElementById('active_orders_grid');
+      if (!container) return;
+
+      if (!state.positions.length) {
+        container.innerHTML = `
+          <div class="empty-trades">
+            <div class="empty-icon">⏳</div>
+            <strong>Belum Ada Posisi Terbuka</strong>
+            <p>AEGIS memindai pasar Binance setiap 60 detik. Ketika keyakinan model XGBoost memenuhi syarat, posisi baru akan otomatis muncul di sini.</p>
+            <button class="btn btn-predict btn-sm" onclick="apiAction('/api/predict/run-once', 'Memindai Peluang AI', 'btn_predict')">⚡ Scan Peluang AI Sekarang</button>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = state.positions.map(function(p) {
+        const isSelected = p.symbol === state.selectedSymbol ? ' active' : '';
+        const isBuy = p.side === 'BUY';
+        const sideClass = isBuy ? 'badge-buy' : 'badge-sell';
+        const pnlSign = p.unrealized_pnl_usd >= 0 ? 'good' : 'bad';
+        const pnlPct = p.unrealized_return_percent !== undefined
+          ? (p.unrealized_return_percent > 0 ? '+' : '') + p.unrealized_return_percent.toFixed(2) + '%'
+          : '';
+
+        return `
+          <div class="order-card${isSelected}" onclick="selectSymbol('${p.symbol}', true)">
+            <div class="order-header">
+              <div class="order-symbol-group">
+                <strong>${p.symbol}</strong>
+                <span class="badge ${sideClass}">${isBuy ? '🟢 BUY' : '🔴 SELL'}</span>
+              </div>
+              <div class="order-pnl ${pnlSign}">
+                <strong>${fmtUsd(p.unrealized_pnl_usd)}</strong>
+                <small>(${pnlPct})</small>
+              </div>
+            </div>
+
+            <div class="order-grid-details">
+              <div><small>Harga Masuk</small><b>${fmtPrice(p.entry_price)}</b></div>
+              <div><small>Harga Sekarang</small><b>${fmtPrice(p.current_price)}</b></div>
+              <div><small>Target TP</small><b class="good">${fmtPrice(p.take_profit_price)}</b></div>
+              <div><small>Batas SL</small><b class="bad">${fmtPrice(p.stop_loss_price)}</b></div>
+              <div><small>Margin (10x)</small><b>$${p.margin_usd} ($${p.notional_usd})</b></div>
+              <div><small>Keyakinan</small><b class="accent-text">${p.confidence}%</b></div>
+            </div>
+
+            <div class="order-footer">
+              <span>Waktu: ${fmtTime(p.prediction_time)}</span>
+              <span class="view-chart-hint">📈 Buka di Chart</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Status Ribbon Display
+    function updateRibbonDisplay() {
+      const p = state.positions.find(item => item.symbol === state.selectedSymbol);
+      const sideEl = document.getElementById('ribbon_side');
+      if (!sideEl) return;
+
+      if (p) {
+        const isBuy = p.side === 'BUY';
+        sideEl.textContent = isBuy ? 'BUY (LONG)' : 'SELL (SHORT)';
+        sideEl.className = isBuy ? 'good' : 'bad';
+        document.getElementById('ribbon_conf').textContent = p.confidence + '%';
+        document.getElementById('ribbon_entry').textContent = fmtPrice(p.entry_price);
+        document.getElementById('ribbon_tp').textContent = fmtPrice(p.take_profit_price);
+        document.getElementById('ribbon_sl').textContent = fmtPrice(p.stop_loss_price);
+        const pnlEl = document.getElementById('ribbon_pnl');
+        pnlEl.textContent = fmtUsd(p.unrealized_pnl_usd) + ' (' + (p.unrealized_return_percent ?? 0) + '%)';
+        pnlEl.className = p.unrealized_pnl_usd >= 0 ? 'good' : 'bad';
+
+        const protEl = document.getElementById('ribbon_prot');
+        if (protEl) {
+          protEl.textContent = p.risk_status === 'IN_PROFIT' ? '🛡️ PROTEKSI AKTIF' : 'NORMAL';
+          protEl.className = p.risk_status === 'IN_PROFIT' ? 'good' : '';
+        }
+      } else {
+        const latestClose = state.candles && state.candles.length > 0 ? state.candles[state.candles.length - 1].close : null;
+        sideEl.textContent = 'STANDBY / HOLD';
+        sideEl.className = 'muted';
+        document.getElementById('ribbon_conf').textContent = 'Memantau Pasar';
+        document.getElementById('ribbon_entry').textContent = latestClose ? fmtPrice(latestClose) : '-';
+        document.getElementById('ribbon_tp').textContent = (state.cfg ? 'Otomatis (+' + (state.cfg.tp * 100).toFixed(2) + '%)' : 'Otomatis');
+        document.getElementById('ribbon_sl').textContent = (state.cfg ? 'Otomatis (-' + (state.cfg.sl * 100).toFixed(2) + '%)' : 'Otomatis');
+        const pnlEl = document.getElementById('ribbon_pnl');
+        pnlEl.textContent = '$0.00';
+        pnlEl.className = 'muted';
+        const protEl = document.getElementById('ribbon_prot');
+        if (protEl) {
+          protEl.textContent = 'SIAP';
+          protEl.className = 'muted';
+        }
+      }
+    }
+
+    // Symbols Initialization
+    async function initSymbols() {
+      const list = await fetchApi('/api/symbols');
+      if (!list || !list.length) return;
+      state.symbols = list.map(item => item.symbol);
+      if (!state.selectedSymbol) {
+        state.selectedSymbol = state.symbols[0];
+      }
+
+      const select = document.getElementById('symbol_select');
+      if (select) {
+        select.innerHTML = state.symbols.map(function(s) {
+          return '<option value="' + s + '">' + s + '</option>';
+        }).join('');
+        select.value = state.selectedSymbol;
+        select.onchange = function(e) {
+          selectSymbol(e.target.value, true);
+        };
+      }
+    }
+
+    function selectSymbol(sym, triggerChart = true) {
+      if (!sym) return;
+      state.selectedSymbol = sym;
+      const select = document.getElementById('symbol_select');
+      if (select) select.value = sym;
+      renderActiveOrdersGrid();
+      updateRibbonDisplay();
+      if (triggerChart) {
+        showToast('📈 Membuka grafik lilin ' + sym, 'info');
+        refreshChart(true);
+      }
+    }
+
+    function setTimeframe(tf) {
+      state.selectedTimeframe = tf;
+      document.querySelectorAll('.tf-btn').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.tf === tf);
+      });
+      showToast('📊 Mengubah timeframe grafik ke ' + tf, 'info');
+      refreshChart(true);
+    }
+
+    // Chart Fetcher & Renderer
+    async function refreshChart(force = false) {
+      if (!state.selectedSymbol) return;
+      const sym = state.selectedSymbol;
+      const tf = state.selectedTimeframe || '1m';
+
+      const titleEl = document.getElementById('chart_title');
+      if (titleEl) titleEl.textContent = 'Grafik Lilin ' + sym + ' (' + tf + ')';
+
+      const candles = await fetchApi('/api/candles/' + sym + '/' + tf + '?limit=100');
+      if (!candles || !candles.length) {
+        const statEl = document.getElementById('chart_status');
+        if (statEl) statEl.textContent = 'Menunggu data lilin candle...';
+        return;
+      }
+      state.candles = candles;
+
+      const lastCandle = candles[candles.length - 1];
+      const statEl = document.getElementById('chart_status');
+      if (statEl) {
+        statEl.textContent = 'Harga Live: $' + fmtPrice(lastCandle.close) + ' • ' + new Date().toLocaleTimeString();
+      }
+
+      updateRibbonDisplay();
+      drawChartWithLevels(candles, sym);
+    }
+
+    // Authentic Japanese Candlestick Chart with TP/SL/Entry Overlay
+    function drawChartWithLevels(candles, targetSymbol) {
+      const canvas = document.getElementById('price_chart');
+      if (!canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const parentWidth = canvas.parentElement ? canvas.parentElement.clientWidth : 850;
+      const w = Math.max(400, (rect && rect.width > 50) ? rect.width : (parentWidth > 50 ? parentWidth : 850));
+      const h = 280;
+
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(400, Math.floor(w * dpr));
+      canvas.height = Math.max(220, Math.floor(h * dpr));
+
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      if (!candles || !candles.length) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '13px sans-serif';
+        ctx.fillText('Memuat pergerakan lilin pasar Binance...', 40, 140);
+        return;
+      }
+
+      const pad = { left: 16, right: 90, top: 25, bottom: 25 };
+      const plotW = w - pad.left - pad.right;
+      const plotH = h - pad.top - pad.bottom;
+
+      // Find active position ONLY for this target symbol to avoid price scale distortion
+      const activePosition = state.positions.find(p => p.symbol === targetSymbol);
+
+      // Collect all price points
+      let pricePoints = [];
+      candles.forEach(function(c) {
+        if (c.high && !isNaN(c.high)) pricePoints.push(Number(c.high));
+        if (c.low && !isNaN(c.low)) pricePoints.push(Number(c.low));
+        if (c.close && !isNaN(c.close)) pricePoints.push(Number(c.close));
+        if (c.open && !isNaN(c.open)) pricePoints.push(Number(c.open));
+      });
+
+      if (activePosition) {
+        if (activePosition.entry_price && !isNaN(activePosition.entry_price)) pricePoints.push(Number(activePosition.entry_price));
+        if (activePosition.take_profit_price && !isNaN(activePosition.take_profit_price)) pricePoints.push(Number(activePosition.take_profit_price));
+        if (activePosition.stop_loss_price && !isNaN(activePosition.stop_loss_price)) pricePoints.push(Number(activePosition.stop_loss_price));
+      }
+
+      pricePoints = pricePoints.filter(p => !isNaN(p) && isFinite(p) && p > 0);
+      if (!pricePoints.length) return;
+
+      let min = Math.min(...pricePoints);
+      let max = Math.max(...pricePoints);
+      const span = (max - min) || (max * 0.01);
+      min -= span * 0.06;
+      max += span * 0.06;
+
+      const nBars = candles.length > 1 ? candles.length : 1;
+      const slotW = plotW / nBars;
+      const getX = function(i) { return pad.left + (i * slotW) + (slotW / 2); };
+      const getY = function(p) { return pad.top + (max - p) * plotH / (max - min); };
+
+      // Background Grid Lines & Right Price Labels
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#64748b';
+      ctx.font = '10px -apple-system, sans-serif';
+
+      for (let i = 0; i <= 3; i++) {
+        const yVal = pad.top + (i * plotH / 3);
+        const pVal = max - (i * (max - min) / 3);
+        ctx.beginPath();
+        ctx.moveTo(pad.left, yVal);
+        ctx.lineTo(w - pad.right, yVal);
+        ctx.stroke();
+        ctx.fillText('$' + fmtPrice(pVal), w - pad.right + 6, yVal + 3);
+      }
+
+      // Volume Bars at Bottom (20px height)
+      let maxVol = Math.max(...candles.map(c => Number(c.volume) || 0)) || 1;
+      const barW = Math.max(2, Math.min(10, Math.floor(slotW * 0.72)));
+
+      for (let i = 0; i < candles.length; i++) {
+        const c = candles[i];
+        const xx = getX(i);
+        const isUp = Number(c.close) >= Number(c.open);
+        const vol = Number(c.volume) || 0;
+        const volH = Math.min(26, Math.max(2, (vol / maxVol) * 26));
+
+        ctx.fillStyle = isUp ? 'rgba(34, 197, 94, 0.2)' : 'rgba(244, 63, 94, 0.2)';
+        ctx.fillRect(xx - barW / 2, h - pad.bottom - volH, barW, volH);
+      }
+
+      // Japanese Candlestick Bodies & Wicks
+      for (let i = 0; i < candles.length; i++) {
+        const c = candles[i];
+        const open = Number(c.open);
+        const close = Number(c.close);
+        const high = Number(c.high);
+        const low = Number(c.low);
+        const isUp = close >= open;
+        const color = isUp ? '#22c55e' : '#f43f5e';
+        const xx = getX(i);
+
+        // High-Low Wick Line
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(xx, getY(high));
+        ctx.lineTo(xx, getY(low));
+        ctx.stroke();
+
+        // Open-Close Body Rectangle
+        const topY = Math.min(getY(open), getY(close));
+        const bodyH = Math.max(2, Math.abs(getY(close) - getY(open)));
+
+        ctx.fillStyle = color;
+        ctx.fillRect(xx - barW / 2, topY, barW, bodyH);
+      }
+
+      // 9-Period Moving Average (SMA-9) Gold Curve
+      if (candles.length >= 5) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(250, 204, 21, 0.85)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        let started = false;
+
+        for (let i = 0; i < candles.length; i++) {
+          const windowStart = Math.max(0, i - 8);
+          const slice = candles.slice(windowStart, i + 1);
+          const avg = slice.reduce((acc, cur) => acc + Number(cur.close), 0) / slice.length;
+          const xx = getX(i);
+          const yy = getY(avg);
+
+          if (!started) {
+            ctx.moveTo(xx, yy);
+            started = true;
+          } else {
+            ctx.lineTo(xx, yy);
+          }
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Live Current Price Horizontal Guide Line & Tag
+      const lastPrice = Number(candles[candles.length - 1].close);
+      const lastY = getY(lastPrice);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.setLineDash([2, 3]);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+      ctx.lineWidth = 1;
+      ctx.moveTo(pad.left, lastY);
+      ctx.lineTo(w - pad.right, lastY);
+      ctx.stroke();
+
+      // Price Tag Pill on Right Axis
+      ctx.fillStyle = '#0284c7';
+      ctx.fillRect(w - pad.right + 2, lastY - 9, 84, 18);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillText('$' + fmtPrice(lastPrice), w - pad.right + 6, lastY + 4);
+      ctx.restore();
+
+      // Draw Trade Execution Levels (Entry, TP, SL) if active position exists
+      if (activePosition) {
+        const drawLevel = function(price, label, color, textColor = '#070a12') {
+          if (!price || isNaN(price)) return;
+          const yL = getY(price);
+          ctx.save();
+          ctx.beginPath();
+          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.75;
+          ctx.moveTo(pad.left, yL);
+          ctx.lineTo(w - pad.right, yL);
+          ctx.stroke();
+
+          // Pill tag on right axis
+          ctx.setLineDash([]);
+          ctx.fillStyle = color;
+          ctx.fillRect(w - pad.right + 2, yL - 8, 84, 16);
+          ctx.fillStyle = textColor;
+          ctx.font = 'bold 9px sans-serif';
+          ctx.fillText(label + ': $' + fmtPrice(price), w - pad.right + 5, yL + 4);
+          ctx.restore();
+        };
+
+        drawLevel(activePosition.entry_price, 'ENTRY', '#eab308');
+        drawLevel(activePosition.take_profit_price, 'TP', '#22c55e');
+        drawLevel(activePosition.stop_loss_price, 'SL', '#f43f5e', '#ffffff');
+      }
+    }
+
+    // Predictions Feed Table & Filters
+    function setFeedFilter(filter) {
+      state.activeFilter = filter;
+      ['buysell', 'pending', 'done', 'all'].forEach(function(k) {
+        const btn = document.getElementById('tab_' + k);
+        if (btn) btn.classList.toggle('active', k.toUpperCase() === filter || (filter === 'BUYSELL' && k === 'buysell'));
+      });
+      showToast('🔍 Filter tabel: ' + filter, 'info');
+      renderFeedTable();
+    }
+
+    async function refreshPredictionsFeed() {
+      const list = await fetchApi('/api/predictions/recent?limit=50');
+      if (list && Array.isArray(list)) {
+        state.predictions = list;
+        renderFeedTable();
+      }
+    }
+
+    function renderFeedTable() {
+      const tbody = document.getElementById('feed_tbody');
+      if (!tbody) return;
+
+      if (!state.predictions.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center muted" style="padding: 24px;">Belum ada riwayat sinyal di database. Klik tombol "⚡ Scan Peluang AI" untuk memulai!</td></tr>';
+        return;
+      }
+
+      let filtered = state.predictions;
+      if (state.activeFilter === 'BUYSELL') {
+        filtered = filtered.filter(r => ['BUY', 'SELL', 'UP', 'DOWN'].includes(r.prediction));
+      } else if (state.activeFilter === 'PENDING') {
+        filtered = filtered.filter(r => r.status === 'PENDING');
+      } else if (state.activeFilter === 'DONE') {
+        filtered = filtered.filter(r => r.status !== 'PENDING');
+      }
+
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center muted" style="padding: 24px;">Tidak ada data untuk filter \'' + state.activeFilter + '\'.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(function(r) {
+        const isBuy = ['BUY', 'UP'].includes(r.prediction);
+        const isSell = ['SELL', 'DOWN'].includes(r.prediction);
+        const badgeCls = isBuy ? 'badge-buy' : isSell ? 'badge-sell' : 'badge-hold';
+        const actionTxt = isBuy ? '🟢 BUY' : isSell ? '🔴 SELL' : '⚪ HOLD';
+
+        let resCls = 'muted';
+        let resTxt = r.status === 'PENDING' ? '⏳ BERJALAN' : '-';
+        if (r.result === 'CORRECT' || (r.actual_direction && r.actual_direction.startsWith('TP_'))) {
+          resCls = 'good';
+          resTxt = '🎯 TAKE PROFIT';
+        } else if (r.actual_direction && r.actual_direction.startsWith('BE_')) {
+          resCls = 'accent-text';
+          resTxt = '🛡️ BREAKEVEN';
+        } else if (r.result === 'WRONG' || (r.actual_direction && (r.actual_direction.startsWith('SL_') || r.actual_direction.startsWith('NS_')))) {
+          resCls = 'bad';
+          resTxt = '❌ STOP LOSS';
+        }
+
+        const retVal = r.actual_return_percent !== null && r.actual_return_percent !== undefined
+          ? (r.actual_return_percent > 0 ? '+' : '') + r.actual_return_percent.toFixed(2) + '%'
+          : (r.status === 'PENDING' ? '<span class="muted">Live</span>' : '-');
+
+        return `
+          <tr onclick="selectSymbol('${r.symbol}', true)" style="cursor: pointer;">
+            <td class="muted">${fmtTime(r.prediction_time)}</td>
+            <td><strong>${r.symbol}</strong></td>
+            <td><span class="badge ${badgeCls}">${actionTxt}</span></td>
+            <td><b class="accent-text">${r.confidence ? r.confidence.toFixed(1) + '%' : '-'}</b></td>
+            <td>${fmtPrice(r.entry_price)}</td>
+            <td><span class="status-pill status-${(r.status || '').toLowerCase()}">${r.status}</span></td>
+            <td class="${resCls}"><strong>${resTxt}</strong></td>
+            <td class="${resCls}"><strong>${retVal}</strong></td>
+            <td class="reason-col" title="${escapeHtml(r.reason_summary)}">${escapeHtml(r.reason_summary || '-')}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // Gemini & Copilot Chat Controller
+    async function handleChatSubmit(e) {
+      e.preventDefault();
+      const input = document.getElementById('chat_input');
+      const msg = input.value.trim();
+      if (!msg || state.isChatBusy) return;
+
+      input.value = '';
+      await sendChatMessage(msg);
+    }
+
+    function sendQuickPrompt(promptText) {
+      if (state.isChatBusy) return;
+      sendChatMessage(promptText);
+    }
+
+    async function sendChatMessage(msg) {
+      state.isChatBusy = true;
+      appendMessage('Anda', msg, false);
+
+      const loadingId = appendLoadingBubble();
+      const sendBtn = document.getElementById('chat_send_btn');
+      if (sendBtn) sendBtn.disabled = true;
+
+      const fullUrl = API_BASE + '/api/chat';
+      try {
+        const res = await fetch(fullUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await res.json();
+        removeLoadingBubble(loadingId);
+        appendMessage('AEGIS Copilot', data.reply || 'Maaf, tidak ada respon.', true);
+      } catch (err) {
+        removeLoadingBubble(loadingId);
+        appendMessage('AEGIS Copilot', 'Terjadi kendala koneksi: ' + err.message, true);
+      } finally {
+        state.isChatBusy = false;
+        if (sendBtn) sendBtn.disabled = false;
+      }
+    }
+
+    function appendMessage(sender, text, isAi) {
+      const container = document.getElementById('chat_messages');
+      if (!container) return;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble ' + (isAi ? 'bubble-ai' : 'bubble-user');
+      bubble.innerHTML = `
+        <div class="bubble-sender">${escapeHtml(sender)}</div>
+        <div class="bubble-content">${formatMarkdown(text)}</div>
+      `;
+      container.appendChild(bubble);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function appendLoadingBubble() {
+      const container = document.getElementById('chat_messages');
+      if (!container) return null;
+
+      const id = 'loading_' + Date.now();
+      const bubble = document.createElement('div');
+      bubble.id = id;
+      bubble.className = 'chat-bubble bubble-ai bubble-loading';
+      bubble.innerHTML = `
+        <div class="bubble-sender">AEGIS Copilot</div>
+        <div class="bubble-content"><span class="typing-indicator">Menganalisis data pasar...</span></div>
+      `;
+      container.appendChild(bubble);
+      container.scrollTop = container.scrollHeight;
+      return id;
+    }
+
+    function removeLoadingBubble(id) {
+      if (!id) return;
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    }
+
+    // Realtime Synchronization Loop
+    async function syncAll(forceChart = false) {
+      await Promise.all([
+        refreshMetricsAndOrders(),
+        refreshPredictionsFeed(),
+        refreshChart(forceChart),
+      ]);
+    }
+
+    // Startup & Lifecycle
+    async function startup() {
+      console.log('[AEGIS] Memulai startup dashboard AEGIS...');
+      try {
+        await initSymbols();
+        await refreshAiBadge();
+        // Load active orders first so if an active trade exists, we auto-select it immediately!
+        await refreshMetricsAndOrders();
+        if (state.positions.length > 0) {
+          state.selectedSymbol = state.positions[0].symbol;
+          const select = document.getElementById('symbol_select');
+          if (select) select.value = state.selectedSymbol;
+        }
+        await Promise.all([
+          refreshPredictionsFeed(),
+          refreshChart(true),
+        ]);
+        showToast('🚀 AEGIS Quant Dashboard Berhasil Terhubung!', 'success');
+      } catch (err) {
+        console.error('Startup Error:', err);
+        showToast('⚠️ Startup warning: ' + err.message, 'error');
+      }
+
+      window.addEventListener('resize', function() {
+        if (state.candles.length > 0) {
+          drawChartWithLevels(state.candles, state.selectedSymbol);
+        }
+      });
+
+      setInterval(function() {
+        if (!document.hidden && state.isPolling) {
+          syncAll(false);
+        }
+      }, state.pollIntervalMs);
+    }
+
+    // Initialize immediately on load
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', startup);
+    } else {
+      startup();
+    }
+  </script>
 </body>
 </html>

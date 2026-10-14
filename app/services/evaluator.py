@@ -29,24 +29,42 @@ def find_risk_exit(db: Session, pred: PredictionLog, now: datetime) -> tuple[dat
         MarketCandle.open_time <= until_time,
     ).order_by(MarketCandle.open_time.asc()).all()
 
-    for candle in candles:
-        if side == 'BUY':
-            stop_hit = candle.low_price <= risk_plan.stop_loss_price
-            profit_hit = candle.high_price >= risk_plan.take_profit_price
-        else:
-            stop_hit = candle.high_price >= risk_plan.stop_loss_price
-            profit_hit = candle.low_price <= risk_plan.take_profit_price
+    breakeven_triggered = False
+    # If favorable move reaches 50% of TP distance, activate Breakeven Stop
+    be_profit_threshold = settings.take_profit_percent * 0.50
 
+    for candle in candles:
+        # Breakeven state is the one known BEFORE this candle: intrabar order is
+        # unknown, so a candle that both arms breakeven and touches entry is not
+        # assumed to have armed it first.
+        effective_sl = pred.entry_price if breakeven_triggered else risk_plan.stop_loss_price
+        if side == 'BUY':
+            stop_hit = candle.low_price <= effective_sl
+            profit_hit = candle.high_price >= risk_plan.take_profit_price
+            favorable_move = (candle.high_price / pred.entry_price) - 1
+        else:
+            stop_hit = candle.high_price >= effective_sl
+            profit_hit = candle.low_price <= risk_plan.take_profit_price
+            favorable_move = 1 - (candle.low_price / pred.entry_price)
+
+        # Conservative: if TP and SL are both touched in the same candle, the stop wins.
         if stop_hit:
+            if breakeven_triggered:
+                return candle.open_time, pred.entry_price, f'BE_{side}', 'NEUTRAL'
             return candle.open_time, risk_plan.stop_loss_price, f'SL_{side}', 'WRONG'
         if profit_hit:
             return candle.open_time, risk_plan.take_profit_price, f'TP_{side}', 'CORRECT'
-        if side == 'BUY':
-            near_stop_hit = ((candle.close_price / pred.entry_price) - 1) <= -(settings.stop_loss_percent * settings.near_stop_percent)
-        else:
-            near_stop_hit = ((pred.entry_price / candle.close_price) - 1) <= -(settings.stop_loss_percent * settings.near_stop_percent)
-        if near_stop_hit:
-            return candle.open_time, candle.close_price, f'NS_{side}', 'WRONG'
+
+        if favorable_move >= be_profit_threshold and settings.breakeven_stop_enabled:
+            breakeven_triggered = True
+
+        if not breakeven_triggered:
+            if side == 'BUY':
+                near_stop_hit = ((candle.close_price / pred.entry_price) - 1) <= -(settings.stop_loss_percent * settings.near_stop_percent)
+            else:
+                near_stop_hit = ((pred.entry_price / candle.close_price) - 1) <= -(settings.stop_loss_percent * settings.near_stop_percent)
+            if near_stop_hit:
+                return candle.open_time, candle.close_price, f'NS_{side}', 'WRONG'
     return None
 
 
@@ -82,6 +100,7 @@ def evaluate_pending(db: Session, limit: int = 200) -> dict:
             return_value = (actual_price / pred.entry_price) - 1
             if prediction_side(pred.prediction) == 'SELL':
                 return_value = -return_value
+            return_value -= settings.round_trip_cost
             if actual_direction_value.startswith('SL_'):
                 stopped += 1
             elif actual_direction_value.startswith('NS_'):
@@ -113,6 +132,11 @@ def evaluate_pending(db: Session, limit: int = 200) -> dict:
             elif direction == paper_side:
                 result = 'CORRECT'
             else:
+                result = 'WRONG'
+
+        if not risk_exit:
+            return_value -= settings.round_trip_cost
+            if result == 'CORRECT' and return_value <= 0:
                 result = 'WRONG'
 
         pred.status = 'EVALUATED'

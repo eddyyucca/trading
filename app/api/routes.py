@@ -89,8 +89,8 @@ def collect_one_cycle():
 
 
 @router.post('/predict/run-once')
-def predict_once():
-    return prediction_job()
+def predict_once(force: bool = False):
+    return prediction_job(force=force)
 
 
 @router.post('/evaluator/run-once')
@@ -236,9 +236,9 @@ def ai_status(db: Session = Depends(get_db)):
 
 
 @router.post('/ai/retrain')
-def trigger_ai_retrain():
+def trigger_ai_retrain(force: bool = False):
     from app.ml.auto_learner import run_auto_retrain_cycle
-    result = run_auto_retrain_cycle(force=True)
+    result = run_auto_retrain_cycle(force=force)
     return result
 
 

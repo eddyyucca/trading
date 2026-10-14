@@ -12,7 +12,7 @@ from app.services.evaluator import evaluate_pending
 scheduler = BackgroundScheduler(timezone='UTC')
 
 
-def collect_once(limit: int = 5) -> dict:
+def collect_once(limit: int = 30) -> dict:
     settings = get_settings()
     client = BinanceRestClient()
     db: Session = SessionLocal()
@@ -88,10 +88,10 @@ def ensure_history() -> dict:
     }
 
 
-def prediction_job() -> dict:
+def prediction_job(force: bool = False) -> dict:
     db: Session = SessionLocal()
     try:
-        return run_prediction_once(db)
+        return run_prediction_once(db, force=force)
     finally:
         db.close()
 

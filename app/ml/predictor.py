@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+from datetime import datetime, timedelta
 import joblib
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -24,7 +25,7 @@ def predict_ai_signal(
     symbol: Symbol,
     timeframe: str = '5m',
     min_candles: int = 60,
-    confidence_threshold: float = 0.48,
+    confidence_threshold: float | None = None,
 ) -> dict:
     """
     Inference endpoint: evaluates the latest market data for a given symbol
@@ -43,12 +44,23 @@ def predict_ai_signal(
     model = artifact['model']
     feature_cols = artifact['feature_columns']
 
+    if artifact.get('timeframe') and artifact['timeframe'] != timeframe:
+        return {
+            'action': 'HOLD',
+            'confidence': 0.0,
+            'probabilities': {'HOLD': 1.0, 'BUY': 0.0, 'SELL': 0.0},
+            'reason': [f"Model trained on {artifact['timeframe']} but asked for {timeframe}; retrain required."],
+            'model_ready': False,
+        }
+    if confidence_threshold is None:
+        confidence_threshold = float(artifact.get('confidence_threshold', 0.48))
+
     # Fetch last 120 candles for proper indicator warmup
     candles = (
         db.query(MarketCandle)
         .filter(MarketCandle.symbol_id == symbol.id, MarketCandle.timeframe == timeframe)
         .order_by(MarketCandle.open_time.desc())
-        .limit(120)
+        .limit(300)
         .all()
     )
 
@@ -62,6 +74,18 @@ def predict_ai_signal(
         }
 
     candles = list(reversed(candles))
+    # Training only saw closed candles; drop the still-forming one to avoid train/serve skew.
+    tf_min = int(timeframe[:-1]) * {'m': 1, 'h': 60, 'd': 1440}[timeframe[-1]]
+    if candles and candles[-1].open_time + timedelta(minutes=tf_min) > datetime.utcnow():
+        candles = candles[:-1]
+    if len(candles) < min_candles:
+        return {
+            'action': 'HOLD',
+            'confidence': 0.0,
+            'probabilities': {'HOLD': 1.0, 'BUY': 0.0, 'SELL': 0.0},
+            'reason': [f'Closed candle count ({len(candles)}) below minimum ({min_candles}).'],
+            'model_ready': True,
+        }
     df_raw = pd.DataFrame([{
         'open_time': c.open_time,
         'open_price': c.open_price,
@@ -72,7 +96,7 @@ def predict_ai_signal(
     } for c in candles])
 
     feat_df = compute_features(df_raw)
-    feat_df[feature_cols] = feat_df[feature_cols].ffill().bfill().fillna(0.0)
+    feat_df[feature_cols] = feat_df[feature_cols].replace([float('inf'), float('-inf')], float('nan')).ffill().fillna(0.0)
 
     # Take the latest candle features
     latest_row = feat_df.iloc[[-1]][feature_cols]

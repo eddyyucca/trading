@@ -427,7 +427,7 @@ def in_cooldown(db: Session, symbol: Symbol) -> bool:
 def performance_guard_status(db: Session) -> dict:
     settings = get_settings()
     if not settings.performance_guard_enabled:
-        return {'blocked': False, 'reason': 'disabled'}
+        return {'blocked': False, 'status': 'ACTIVE', 'reason': 'disabled'}
 
     rows = (
         db.query(PredictionResult)
@@ -436,7 +436,23 @@ def performance_guard_status(db: Session) -> dict:
         .all()
     )
     if len(rows) < settings.performance_guard_min_results:
-        return {'blocked': False, 'reason': 'not_enough_results', 'checked': len(rows)}
+        return {'blocked': False, 'status': 'ACTIVE', 'reason': 'not_enough_results', 'checked': len(rows)}
+
+    # Auto-recovery cooldown: if the turbulent market occurred > 30 minutes ago,
+    # release the guard so the engine can resume probing with fresh market conditions.
+    latest_eval = rows[0].evaluation_time if rows else None
+    cooldown_minutes = 30
+    if latest_eval:
+        time_since = (datetime.utcnow() - latest_eval).total_seconds() / 60.0
+        if time_since > cooldown_minutes:
+            return {
+                'blocked': False,
+                'status': 'COOLDOWN_EXPIRED',
+                'reason': f'Cooldown selesai ({round(time_since)} menit lalu), mesin aktif kembali.',
+                'checked': len(rows),
+                'accuracy': 0.0,
+                'pnl_usd': 0.0,
+            }
 
     correct = sum(1 for r in rows if r.result == 'CORRECT')
     wrong   = sum(1 for r in rows if r.result == 'WRONG')
@@ -449,6 +465,7 @@ def performance_guard_status(db: Session) -> dict:
     )
     return {
         'blocked':  blocked,
+        'status':   'PAUSED' if blocked else 'ACTIVE',
         'checked':  len(rows),
         'accuracy': round(accuracy, 4),
         'pnl_usd':  round(pnl_usd, 6),
@@ -493,7 +510,7 @@ def get_active_model(db: Session) -> ModelVersion:
 
 # ── Main Prediction Loop ──────────────────────────────────────────────────────
 
-def run_prediction_once(db: Session) -> dict:
+def run_prediction_once(db: Session, force: bool = False) -> dict:
     settings = get_settings()
     model    = get_active_model(db)
     created  = 0
@@ -501,7 +518,7 @@ def run_prediction_once(db: Session) -> dict:
     details  = []
 
     guard = performance_guard_status(db)
-    if guard['blocked']:
+    if guard['blocked'] and not force:
         return {'created': 0, 'skipped': 0, 'guard': guard, 'details': []}
 
     open_at_start = open_position_count(db)
@@ -542,18 +559,24 @@ def run_prediction_once(db: Session) -> dict:
         primary_result = valid[settings.prediction_timeframe]
 
         if model.type == 'ml_xgboost':
-            ai_res = predict_ai_signal(
-                db, symbol, timeframe=settings.prediction_timeframe, confidence_threshold=0.42
-            )
+            ai_res = predict_ai_signal(db, symbol, timeframe=settings.prediction_timeframe)
             regime = primary_result.snapshot.market_regime if (primary_result and primary_result.snapshot) else 'UNKNOWN'
+            reason = list(ai_res['reason'])
+            action = ai_res['action']
+            # Quality gate: the rule engine's hard filters (regime, volatility, spike,
+            # dead/abnormal volume, RSI extreme) also veto ML signals.
+            gate = score_timeframe(settings.prediction_timeframe, primary_result.snapshot, primary_result.latest_close)
+            if action != 'HOLD' and gate.blocked:
+                action = 'HOLD'
+                reason.append('Rule gate veto: ' + '; '.join(gate.reasons[:2]))
             decision = PredictionDecision(
-                prediction=ai_res['action'],
+                prediction=action,
                 confidence=ai_res['confidence'],
                 score_total=int(ai_res['confidence'] * 100),
-                reason_summary=' | '.join(ai_res['reason']),
+                reason_summary=' | '.join(reason),
                 market_regime=regime,
             )
-            min_required_conf = 0.40
+            min_required_conf = settings.ml_min_confidence
         else:
             decision = score_multi_timeframe(valid, settings.prediction_timeframe)
             min_required_conf = settings.min_confidence
@@ -568,7 +591,8 @@ def run_prediction_once(db: Session) -> dict:
             })
             continue
 
-        for horizon in settings.horizon_list:
+        # One decision = one tracked trade: use only the longest horizon.
+        for horizon in settings.horizon_list[-1:]:
             due_time = primary_result.snapshot.snapshot_time + timedelta(minutes=horizon)
             exists = db.query(PredictionLog).filter(
                 PredictionLog.symbol_id         == symbol.id,
@@ -600,6 +624,21 @@ def run_prediction_once(db: Session) -> dict:
 
         if decision.prediction in {'BUY', 'SELL'}:
             opened_this_run.add(symbol.id)
+            try:
+                from app.services.binance_executor import BinanceFuturesExecutor
+                from app.services.risk import build_risk_plan
+                plan = build_risk_plan(decision.prediction, primary_result.latest_close)
+                executor = BinanceFuturesExecutor()
+                executor.execute_position(
+                    symbol=symbol.symbol,
+                    side=decision.prediction,
+                    entry_price=primary_result.latest_close,
+                    quantity=plan.quantity,
+                    take_profit_price=plan.take_profit_price,
+                    stop_loss_price=plan.stop_loss_price,
+                )
+            except Exception as ex:
+                print(f"[!] Executor Error ({symbol.symbol}): {ex}")
         details.append({
             'symbol':     symbol.symbol,
             'decision':   decision.prediction,

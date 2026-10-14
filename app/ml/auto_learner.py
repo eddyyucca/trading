@@ -4,11 +4,12 @@ import os
 from datetime import datetime, timezone
 import joblib
 from sqlalchemy.orm import Session
+from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.entities import ModelVersion, PredictionLog, PredictionResult
 from app.ml.features import FEATURE_COLUMNS
 from app.ml.predictor import MODEL_PATH, get_model_artifact
-from app.ml.trainer import MODEL_DIR, prepare_dataset, train_ai_model
+from app.ml.trainer import train_ai_model
 
 
 def get_latest_ai_model_version(db: Session) -> ModelVersion | None:
@@ -22,7 +23,7 @@ def get_latest_ai_model_version(db: Session) -> ModelVersion | None:
 
 def run_auto_retrain_cycle(
     symbols: list[str] | None = None,
-    timeframe: str = '5m',
+    timeframe: str | None = None,
     min_new_evaluations: int = 5,
     force: bool = False,
 ) -> dict:
@@ -34,7 +35,6 @@ def run_auto_retrain_cycle(
     4. Automatically promotes Challenger if performance is equal or superior.
     """
     db: Session = SessionLocal()
-    symbols = symbols or ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']
 
     try:
         current_champion = get_latest_ai_model_version(db)
@@ -60,50 +60,42 @@ def run_auto_retrain_cycle(
         print(f"[*] Starting Auto-Learner cycle. Champion: {current_champion.version if current_champion else 'None'}")
         print(f"[*] Training Challenger: {new_ver_str}...")
 
-        # Train candidate model
-        train_res = train_ai_model(
-            symbols=symbols,
-            timeframe=timeframe,
-            test_ratio=0.20,
-            model_name=model_filename,
-        )
+        # Train candidate model (barriers/symbols/timeframe come from live settings)
+        train_res = train_ai_model(symbols=symbols, timeframe=timeframe, model_name=model_filename)
 
-        challenger_accuracy = train_res['win_rate']
+        st = get_settings()
+        challenger_exp = train_res['expectancy']
         challenger_trades = train_res['total_signals']
+        challenger_accuracy = train_res['win_rate']
 
-        # Determine Champion baseline
-        champion_accuracy = 0.0
+        champion_exp = None
         if current_champion and current_champion.parameters_json:
             try:
-                params = json.loads(current_champion.parameters_json)
-                champion_accuracy = float(params.get('win_rate', 0.0))
+                champion_exp = json.loads(current_champion.parameters_json).get('expectancy')
             except Exception:
-                champion_accuracy = 0.0
+                champion_exp = None
 
-        # Promotion criteria:
-        # If no active model exists, or challenger win_rate >= champion win_rate, or forced
-        promote = False
-        promotion_reason = ""
-
+        # Promotion is judged on net expectancy per trade (after fees) on an untouched
+        # walk-forward holdout, with a minimum number of trades.
         if current_champion is None:
-            promote = True
-            promotion_reason = "Initial AI model bootstrap."
+            promote, promotion_reason = True, "Initial AI model bootstrap."
         elif force:
-            promote = True
-            promotion_reason = "Forced retraining by administrator."
-        elif challenger_accuracy >= champion_accuracy:
-            promote = True
-            promotion_reason = (
-                f"Challenger win rate ({challenger_accuracy:.2f}%) "
-                f"exceeds/equals Champion ({champion_accuracy:.2f}%)."
-            )
-        else:
-            # Prevent catastrophic regression
+            promote, promotion_reason = True, "Forced retraining by administrator."
+        elif challenger_trades < st.ml_min_signals_for_promotion:
             promote = False
-            promotion_reason = (
-                f"Challenger win rate ({challenger_accuracy:.2f}%) was lower than "
-                f"Champion ({champion_accuracy:.2f}%). Champion retained."
-            )
+            promotion_reason = (f"Challenger produced only {challenger_trades} holdout trades "
+                                f"(< {st.ml_min_signals_for_promotion}); Champion retained.")
+        elif challenger_exp <= 0:
+            promote = False
+            promotion_reason = f"Challenger net expectancy {challenger_exp:.4%} <= 0; Champion retained."
+        elif champion_exp is None or challenger_exp >= float(champion_exp) + st.ml_promotion_margin:
+            promote = True
+            promotion_reason = (f"Challenger expectancy {challenger_exp:.4%}/trade beats Champion "
+                                f"({'n/a' if champion_exp is None else f'{float(champion_exp):.4%}'}).")
+        else:
+            promote = False
+            promotion_reason = (f"Challenger expectancy {challenger_exp:.4%} not better than "
+                                f"Champion {float(champion_exp):.4%}; Champion retained.")
 
         if promote:
             # Overwrite active production pointer
@@ -124,6 +116,8 @@ def run_auto_retrain_cycle(
             # Register new champion in database
             meta_json = json.dumps({
                 'win_rate': challenger_accuracy,
+                'expectancy': challenger_exp,
+                'threshold': train_res['threshold'],
                 'total_test_signals': challenger_trades,
                 'top_features': train_res['top_features'],
                 'trained_at': datetime.now(timezone.utc).isoformat(),
@@ -153,8 +147,11 @@ def run_auto_retrain_cycle(
             'reason': promotion_reason,
             'challenger_version': new_ver_str,
             'challenger_win_rate': challenger_accuracy,
+            'challenger_expectancy': challenger_exp,
+            'challenger_trades': challenger_trades,
+            'threshold': train_res['threshold'],
             'champion_version': current_champion.version if current_champion else None,
-            'champion_win_rate': champion_accuracy,
+            'champion_expectancy': champion_exp,
             'trained_at': datetime.now(timezone.utc).isoformat(),
         }
 

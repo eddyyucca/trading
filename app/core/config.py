@@ -45,6 +45,29 @@ class Settings(BaseSettings):
     evaluator_interval_seconds: int = 20
     gemini_api_key: str = ''
 
+    # Live Binance Trading Execution
+    live_trading_enabled: bool = False
+    binance_api_key: str = ''
+    binance_api_secret: str = ''
+    binance_testnet: bool = False
+
+    # Trading costs (per side, fraction of notional). Taker 0.04% + 0.01% slippage.
+    taker_fee_percent: float = 0.0004
+    slippage_percent: float = 0.0001
+
+    # ML decision / training
+    ml_min_confidence: float = 0.40
+    ml_min_signals_for_promotion: int = 30
+    ml_promotion_margin: float = 0.0002
+
+    # Advanced Risk Management
+    breakeven_stop_enabled: bool = True
+    breakeven_trigger_ratio: float = 0.50
+
+    @property
+    def round_trip_cost(self) -> float:
+        return 2 * (self.taker_fee_percent + self.slippage_percent)
+
     @property
     def symbol_list(self) -> List[str]:
         return [x.strip().upper() for x in self.symbols.split(',') if x.strip()]
